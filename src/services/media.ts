@@ -124,6 +124,7 @@ export async function startLiveFmp4(
     pull.close();
     sub.stop();
     ffmpeg?.kill("SIGKILL");
+    opts.logger.log({ level: "info", message: "live stream stopped" });
   };
   opts.signal?.addEventListener("abort", stop, { once: true });
 
@@ -218,6 +219,7 @@ export async function startClipFmp4(
     if (stopped) return;
     stopped = true;
     settleDone(false);
+    opts.logger.log({ level: "info", message: "clip stream stopped" });
     pull.close();
     sub.stop();
     ffmpeg?.kill("SIGKILL");

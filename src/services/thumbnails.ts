@@ -170,6 +170,12 @@ export class ThumbnailService {
       }
       if (dueByNvr.size === 0) return;
       await Promise.all([...dueByNvr].map(([nvrId, list]) => this.runNvr(nvrId, list)));
+      this.opts.logger.log({
+        level: "info",
+        message: "capture round",
+        cameras: [...dueByNvr.values()].reduce((sum, list) => sum + list.length, 0),
+        ms: Date.now() - now,
+      });
       this.lastRun = Math.floor(now / 1000);
       this.lastError = null;
     } catch (error) {
@@ -233,7 +239,7 @@ export class ThumbnailService {
     const ts = cfg.slot;
     const fail = (error: string): void => {
       this.thumbState.set(cfg.cameraId, { camera: cfg.cameraId, lastTs: ts, ok: false, error });
-      this.opts.logger.log({ level: "warn", message: "thumbnail failed", camera: cfg.cameraId, error });
+      this.opts.logger.log({ level: "warn", message: "thumbnail failed", camera: cfg.cameraId, slot: ts, error });
     };
     if (typeof image === "string") return fail(image);
 
@@ -247,5 +253,13 @@ export class ThumbnailService {
     }
     this.opts.db.recordThumbnail(cfg.cameraId, ts, storage.id);
     this.thumbState.set(cfg.cameraId, { camera: cfg.cameraId, lastTs: ts, ok: true, error: null });
+    this.opts.logger.log({
+      level: "info",
+      message: "thumbnail captured",
+      camera: cfg.cameraId,
+      slot: ts,
+      storage: storage.id,
+      bytes: image.length,
+    });
   }
 }

@@ -10,13 +10,13 @@ import { Database } from "./db/index.js";
 import { createApp } from "./http.js";
 import { createAuth } from "./services/auth.js";
 import { ClipService } from "./services/clips.js";
+import { LogFiles } from "./services/log-files.js";
 import { ConnectionPool } from "./services/pool.js";
 import { StorageHub } from "./services/storage-hub.js";
 import { ThumbnailService } from "./services/thumbnails.js";
 import { TimelineService } from "./services/timeline.js";
 
-const LOG_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-const LOG_MAX_ROWS = 100_000;
+const LOG_RETENTION_DAYS = 7;
 const LOG_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 async function main(): Promise<void> {
@@ -24,13 +24,18 @@ async function main(): Promise<void> {
   const { config, source } = loadConfig(process.argv.slice(2));
   const registry = createRegistry();
   fs.mkdirSync(config.workDir, { recursive: true });
-  const db = new Database(path.join(config.workDir, "watchtower.db"));
-  const logger = createLogger(entry => db.insertLog(entry));
+  const logFiles = new LogFiles({ dir: path.join(config.workDir, "logs"), retentionDays: LOG_RETENTION_DAYS });
+  const logger = createLogger(entry => logFiles.write(entry));
   const serverLogger = logger.with({ scope: "server" });
   serverLogger.log({ level: "info", message: "config loaded", source });
-  const pruneLogs = (): void => db.pruneLogs(Date.now() - LOG_RETENTION_MS, LOG_MAX_ROWS);
+  const pruneLogs = (): void => {
+    logFiles.prune(Date.now()).catch((error: unknown) => {
+      serverLogger.log({ level: "error", message: "log retention failed", error });
+    });
+  };
   pruneLogs();
   const pruneTimer = setInterval(pruneLogs, LOG_PRUNE_INTERVAL_MS);
+  const db = new Database(path.join(config.workDir, "watchtower.db"));
 
   if (!db.getStorage("default")) {
     db.upsertStorage({ id: "default", type: "file", config: { root: path.join(config.workDir, "thumbs") } });
@@ -75,6 +80,7 @@ async function main(): Promise<void> {
     hub,
     startedAt,
     logger,
+    logFiles,
   });
 
   const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, () => {
@@ -96,6 +102,7 @@ async function main(): Promise<void> {
     pool.closeAll();
     db.close();
     server.close();
+    void logFiles.close();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);

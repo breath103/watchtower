@@ -106,7 +106,10 @@ export function LogsPage() {
     <main className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-8">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="mr-auto text-xl font-semibold tracking-tight">Logs</h1>
-        <Select value={level} onValueChange={value => setSearchParam("level", value === "info" ? null : value, "replace")}>
+        <Select
+          value={level}
+          onValueChange={value => setSearchParam("level", value === "info" ? null : value, "replace")}
+        >
           <SelectTrigger aria-label="Level" className="w-52">
             <SelectValue />
           </SelectTrigger>

@@ -11,6 +11,7 @@ import { cameraOpener, checkClipRange, clipQuery } from "./api/helpers.js";
 import { mount } from "./api/route.js";
 import { type ApiDeps, apiRoutes } from "./api/routes.js";
 import { ClipCache, clipCacheKey } from "./clip-cache.js";
+import type { LogLevel } from "./core/logger.js";
 import { requireApiKey } from "./services/api-keys.js";
 import { type ClipPumpInfo, type PackagedStream, startClipFmp4, startLiveFmp4 } from "./services/media.js";
 
@@ -88,6 +89,12 @@ async function videoResponse(c: Context, file: string, extraHeaders: Record<stri
   }
 }
 
+function levelForStatus(status: number): LogLevel {
+  if (status >= 500) return "error";
+  if (status >= 400) return "warn";
+  return "info";
+}
+
 export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
   const { auth, db, pool, clips, cache, hub, logger } = opts;
   const app = new Hono();
@@ -109,6 +116,22 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
   for (const route of ["/", "/settings", "/logs"]) app.get(route, page);
   app.get("/app.js", asset("app.js", "text/javascript; charset=utf-8"));
   app.get("/app.css", asset("app.css", "text/css; charset=utf-8"));
+
+  const requestLogger = logger.with({ scope: "api" });
+  app.use("/api/*", async (c, next) => {
+    const started = Date.now();
+    await next();
+    // The Logs page polls this route; logging it would fill the page with itself.
+    if (c.req.method === "GET" && c.req.path === "/api/logs") return;
+    requestLogger.log({
+      level: levelForStatus(c.res.status),
+      message: "request",
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      ms: Date.now() - started,
+    });
+  });
 
   const PUBLIC = new Set(["/api/session", "/api/login", "/api/logout"]);
   app.use("/api/*", (c, next) =>

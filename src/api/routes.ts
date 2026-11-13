@@ -8,6 +8,7 @@ import type { Registry } from "../core/registry.js";
 import { type Database, DEFAULT_THUMBNAIL_FREQUENCY_S } from "../db/index.js";
 import { createApiKey } from "../services/api-keys.js";
 import type { Auth } from "../services/auth.js";
+import type { LogFiles } from "../services/log-files.js";
 import type { ClipService } from "../services/clips.js";
 import type { ConnectionPool } from "../services/pool.js";
 import type { StorageHub } from "../services/storage-hub.js";
@@ -41,13 +42,15 @@ export interface ApiDeps {
   hub: StorageHub;
   startedAt: number;
   logger: Logger;
+  logFiles: LogFiles;
 }
 
 const routes = <const T extends RouteDef[]>(...defs: T): T => defs;
 
 const wizardBody = { connector: z.string(), connection: z.unknown() };
 
-export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnails, hub, startedAt, logger }: ApiDeps) {
+export function apiRoutes(deps: ApiDeps) {
+  const { auth, db, registry, pool, timeline, clips, thumbnails, hub, startedAt, logger, logFiles } = deps;
   const openCamera = cameraOpener(db, pool);
   const listStorages = () => db.listStorages().map(record => ({ ...record, config: redactSecrets(record.config) }));
 
@@ -492,8 +495,8 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
         before: z.coerce.number().int().optional(),
         limit: z.coerce.number().int().min(1).max(500).default(200),
       },
-      handler: ({ query }) => ({
-        entries: db.listLogs({
+      handler: async ({ query }) => ({
+        entries: await logFiles.query({
           levels: LOG_LEVELS.slice(LOG_LEVELS.indexOf(query.level)),
           scope: query.scope ?? null,
           text: query.q ?? null,

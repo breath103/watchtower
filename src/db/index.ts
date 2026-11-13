@@ -4,7 +4,6 @@
 
 import { DatabaseSync } from "node:sqlite";
 
-import type { LogEntry, LogLevel, LogScope, NewLogEntry } from "../core/logger.js";
 import type { ApiKeyRecord, CameraRecord, NvrRecord, StorageRecord, Tag } from "../core/types.js";
 
 const SCHEMA = `
@@ -56,15 +55,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at INTEGER NOT NULL,
   last_used_at INTEGER
 );
-CREATE TABLE IF NOT EXISTS logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts INTEGER NOT NULL,
-  level TEXT NOT NULL,
-  scope TEXT NOT NULL,
-  message TEXT NOT NULL,
-  fields TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS logs_ts ON logs (ts);
 `;
 
 export const DEFAULT_THUMBNAIL_FREQUENCY_S = 30;
@@ -91,14 +81,6 @@ interface StorageRow {
   id: string;
   type: string;
   config: string;
-}
-interface LogRow {
-  id: number;
-  ts: number;
-  level: LogLevel;
-  scope: LogScope;
-  message: string;
-  fields: string;
 }
 interface ApiKeyRow {
   id: string;
@@ -405,47 +387,5 @@ export class Database {
 
   deleteApiKey(id: string): boolean {
     return this.db.prepare("DELETE FROM api_keys WHERE id = ?").run(id).changes > 0;
-  }
-
-  // ---- logs ---------------------------------------------------------------
-  insertLog(entry: NewLogEntry): void {
-    this.db
-      .prepare("INSERT INTO logs (ts, level, scope, message, fields) VALUES (?, ?, ?, ?, ?)")
-      .run(entry.ts, entry.level, entry.scope, entry.message, JSON.stringify(entry.fields));
-  }
-
-  listLogs(filter: {
-    levels: readonly LogLevel[];
-    scope: LogScope | null;
-    text: string | null;
-    before: number | null;
-    limit: number;
-  }): LogEntry[] {
-    const where = [`level IN (${filter.levels.map(() => "?").join(", ")})`];
-    const args: Array<string | number> = [...filter.levels];
-    if (filter.scope !== null) {
-      where.push("scope = ?");
-      args.push(filter.scope);
-    }
-    if (filter.text !== null) {
-      const pattern = `%${filter.text.replace(/[\\%_]/g, char => `\\${char}`)}%`;
-      where.push("(message LIKE ? ESCAPE '\\' OR fields LIKE ? ESCAPE '\\')");
-      args.push(pattern, pattern);
-    }
-    if (filter.before !== null) {
-      where.push("id < ?");
-      args.push(filter.before);
-    }
-    const rows = this.db
-      .prepare(`SELECT * FROM logs WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?`)
-      .all(...args, filter.limit) as unknown as LogRow[];
-    return rows.map(row => ({ ...row, fields: JSON.parse(row.fields) as LogEntry["fields"] }));
-  }
-
-  pruneLogs(beforeTs: number, keep: number): void {
-    this.db.prepare("DELETE FROM logs WHERE ts < ?").run(beforeTs);
-    this.db
-      .prepare("DELETE FROM logs WHERE id <= (SELECT id FROM logs ORDER BY id DESC LIMIT 1 OFFSET ?)")
-      .run(keep);
   }
 }

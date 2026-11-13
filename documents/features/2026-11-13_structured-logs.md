@@ -3,8 +3,10 @@
 ## Summary
 
 Every log line in the server becomes a structured entry, `logger.log({ level, message, ...fields })`, instead of a
-formatted string. Entries print to stdout as before and are kept in SQLite, and a new **Logs** page (`/logs`) lets
-the admin browse, filter and search them, with new entries appearing as they happen.
+formatted string, and the server logs everything it does: every thumbnail capture, every API request, every
+connection change. Entries print to stdout as before and are appended to daily JSON-lines files that rotate at
+midnight UTC and are deleted after 7 days. A new **Logs** page (`/logs`) lets the admin browse, filter and search
+them, with new entries appearing as they happen.
 
 ## Before
 
@@ -50,30 +52,37 @@ interface Logger {
 
 - **stdout** stays one readable line per entry, so `npm start` output and `data/` log files stay greppable:
   `08:09:12 warn  thumbnails  thumbnail failed  camera=c1ch1 error="skipped (no keyframe)"`.
-- **SQLite** gets the structured entry.
+- **Log files** get the structured entry as one JSON line: `<workDir>/logs/watchtower-YYYY-MM-DD.jsonl` (UTC date).
 
-## Model
+## What gets logged
 
-```sql
-CREATE TABLE IF NOT EXISTS logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts INTEGER NOT NULL,       -- ms since epoch
-  level TEXT NOT NULL,
-  scope TEXT NOT NULL,
-  message TEXT NOT NULL,
-  fields TEXT NOT NULL       -- JSON object of everything else
-);
-CREATE INDEX IF NOT EXISTS logs_ts ON logs (ts);
-```
+- Every thumbnail capture: `thumbnail captured` (camera, slot, storage, bytes) or `thumbnail failed` (camera,
+  reason), plus one `capture round` per slot (cameras, duration).
+- Every `/api/*` request: method, path, status, duration. 5xx is `error`, 4xx is `warn`. The Logs page's own
+  polling (`GET /api/logs`) is not logged, or the page would fill itself.
+- Everything logged today, converted: NVR connects and disconnects, channel failures, live and clip streams, clip
+  jobs, storage and NVR changes, logins, API keys, tags, retention.
+- Unhandled request errors and startup failures, with the stack.
 
-- Why a table: the page must show what happened before a restart (restarts and crashes are exactly when the admin
-  looks), and filter by level/scope/text. An in-memory buffer loses that, and reading `data/` log files back means
-  parsing text.
-- Context fields stay in one JSON column instead of `nvr`/`camera` columns: the text search matches them
-  (`c1ch1` finds every entry about that camera), and new fields need no schema change.
-- Retention: entries older than 7 days are deleted hourly, and the table is capped at 100,000 rows.
-- Existing databases get the table on the next start (`CREATE TABLE IF NOT EXISTS`); nothing to migrate. Back up
-  `data/watchtower.db` first as usual.
+## Storage: rotating files
+
+`src/services/log-files.ts` (`LogFiles`):
+
+- One file per UTC day, `watchtower-YYYY-MM-DD.jsonl`, appended through a write stream; a new day closes the old
+  stream and opens the next file.
+- Each line is `{ id, ts, level, scope, message, fields }`. `id` is a strictly increasing number derived from the
+  time (`ts * 1000`, bumped on collisions), so it orders entries and serves as the paging cursor across restarts.
+- Retention: files older than 7 days are deleted at startup and hourly.
+- Reading: files newest first, each read backwards in chunks, so the newest page (and the page's 5s refresh)
+  touches only the end of today's file. Filters apply while scanning; it stops at `limit` matches.
+- A write that fails (disk full, shutdown) is dropped; logging never takes the server down.
+
+Volume: logging every capture is ~120 entries a minute with 60 cameras on a 30s frequency, roughly 25 MB a day,
+175 MB at the 7-day limit.
+
+Why files instead of a SQLite table: the volume of logging everything would bloat the database that holds the
+NVR config, and a table needs row caps that push old entries out early. Files rotate and delete with no
+bookkeeping, and can be read with ordinary tools (`tail`, `jq`).
 
 ## API
 
@@ -98,6 +107,8 @@ Response: `{ entries: LogEntry[] }`, newest first, `LogEntry = { id, ts, level, 
   amber, info = muted), scope, message, then fields as muted `key=value` chips. Text is `text-sm`, monospace for
   fields.
 - Live: the first page refreshes every 5 seconds while the tab is visible; new rows appear on top.
+- With everything logged, the default view is busy; the level filter (Warnings and errors) is the quick way to see
+  problems.
 - **Load older** at the bottom fetches the next page with `before`.
 
 ## Call sites converted
@@ -119,4 +130,7 @@ becomes `logger: Logger`, including the connector contract (`src/core/connector.
 
 - Contract change: a third-party connector or storage written against `log: (line) => void` must switch to
   `logger`. All in-tree implementations are converted in this change.
-- A camera that fails every 30s writes ~2,900 rows a day; the 7-day / 100k cap bounds it.
+- A text search over a rarely matching term scans up to 7 days of files (~175 MB); expect a second or two for such
+  queries. The newest-page view and its refresh stay cheap.
+- stdout carries the same volume; if the server's stdout is redirected to a file, that file grows ~25 MB a day
+  unless the redirect is rotated or dropped (the JSON files are the durable log now).
