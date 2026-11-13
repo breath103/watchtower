@@ -1,32 +1,34 @@
 # Watchtower
 
-If you've ever had to use the official ADT CAPS clients, you know. ActiveX. Seriously? It's 2026. And when your
-cameras are spread over a bunch of NVRs at different sites, each one is its own separate login and its own separate
-window. There's no API either.
+## What it is
 
-So I built Watchtower.
+Watchtower is a self-hosted server that connects to all of your CCTV NVRs and gives you one place to manage and
+monitor them. It holds a persistent connection to each NVR, and on top of that provides a web UI for live video,
+recordings and thumbnails across every camera, plus an HTTP API for other systems to consume.
 
-It's one small server you run yourself. You connect all your NVRs to it once, and from then on it's the single place
-where every camera lives: one web page to watch them, one API for your other apps to read from. No plugins, no
-ActiveX, no logging in to each NVR.
+## Why I made it
 
-## What it does
+The vendor clients for ADT CAPS NVRs are built on ActiveX, so they only run in a legacy browser on Windows. Each NVR
+is a separate login in a separate window, there is no way to see cameras from several NVRs together, and there is no
+API to integrate with. Once you have more than a couple of sites, that stops being workable.
 
-- **Every camera on one screen.** A grid of all cameras across all NVRs, with a time slider to scrub back through
-  thumbnails for all of them at once.
-- **Live video in a normal browser.** Click a camera to watch it live. H.265 plays directly where the browser can, and
-  is converted to H.264 where it can't.
-- **Recordings.** See the recording timeline for any day, play back any part of it, and save a clip as MP4.
-- **Thumbnails on a schedule.** Grab a snapshot from each camera every N seconds and store it on local disk or S3.
-  On or off, interval and storage are set per camera.
-- **Add NVRs from the UI.** Enter the address and login, test the connection, and the cameras are discovered for you.
-- **Tags.** Label NVRs and cameras (`location: HQ`), and filter by them in the API.
-- **Logs page.** Everything the server does (each capture, each request, each NVR reconnect) is logged, kept for 7
-  days, and searchable from the browser.
-- **A typed HTTP API.** Other apps read the camera list with an API key, and TypeScript projects get full types for
-  every route.
-- **Gentle on the NVRs.** One connection per NVR, shared by everything, so ten people watching doesn't mean ten
-  logins.
+Watchtower replaces that with a single server: add each NVR once, then use any modern browser to watch every camera,
+and an API key to give other applications access.
+
+## Features
+
+- **Camera grid** across all NVRs, with a time slider for scrubbing back through every camera's thumbnails at once.
+- **Live video** in the browser. H.265 is passed through when the browser supports it and transcoded to H.264
+  otherwise.
+- **Recordings**: per-day recording timeline, playback, and MP4 clip export.
+- **Scheduled thumbnails** to local disk or S3, configured per camera (enabled, interval, storage).
+- **NVR management** in the UI: test the connection, discover cameras, edit and remove NVRs.
+- **Tags** on NVRs and cameras (for example `location: HQ`), filterable through the API.
+- **Logs**: captures, API requests and NVR connection events are logged as structured entries, kept for 7 days, and
+  searchable in the UI.
+- **Typed HTTP API** with API-key authentication. TypeScript consumers get compile-time types for every route.
+- **One connection per NVR**, shared by live view, timelines and thumbnails, so concurrent viewers don't open extra
+  sessions on the device.
 
 Connectors (`src/connectors/`) and storage backends (`src/storage/`) are pluggable. ADT CAPS is the only connector
 today.
@@ -41,14 +43,14 @@ cp config.example.json config.json   # set admin.username and admin.password
 npm start                            # http://127.0.0.1:10530
 ```
 
-Sign in, click **Add NVR**, and you're done. Thumbnail capture stays off until you turn it on in Settings.
+Sign in and use **Add NVR**. Thumbnail capture is off until you enable it in Settings.
 
-Watchtower doesn't do HTTPS itself. Put it behind a reverse proxy before you expose it to the internet.
+Watchtower does not terminate TLS. Put it behind a reverse proxy before exposing it.
 
 ## Configuration
 
-`config.json` holds only what's needed to boot. Everything else (NVRs, storages, capture settings, API keys) is stored
-in the database and edited in the UI.
+`config.json` holds only what is needed to start the server. Everything else (NVRs, storages, capture settings, API
+keys) is stored in the database and edited in the UI.
 
 | key | default | |
 |---|---|---|
@@ -128,4 +130,4 @@ npm test
 npm run build:ui
 ```
 
-`scripts/probe-*.ts` talk to real NVRs. Read one before you run it.
+`scripts/probe-*.ts` connect to real NVRs. Read a script before running it.
