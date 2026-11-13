@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "workDir": {
+      "default": "data",
+      "description": "Directory for the sqlite database, local thumbnails, and clip cache. Relative to this file.",
+      "type": "string"
+    },
+    "host": {
+      "default": "127.0.0.1",
+      "description": "Interface the HTTP server binds to.",
+      "type": "string"
+    },
+    "port": {
+      "default": 10530,
+      "description": "HTTP server port.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "admin": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "password": {
+          "type": "string",
+          "minLength": 8
+        }
+      },
+      "required": [
+        "username",
+        "password"
+      ],
+      "additionalProperties": false,
+      "description": "The one account that can sign in to the web UI. Other systems use API keys instead."
+    }
+  },
+  "required": [
+    "admin"
+  ],
+  "additionalProperties": false
+}

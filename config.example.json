@@ -1,0 +1,10 @@
+{
+  "$schema": "./config.schema.json",
+  "workDir": "data",
+  "host": "127.0.0.1",
+  "port": 10530,
+  "admin": {
+    "username": "admin",
+    "password": "change-me-please"
+  }
+}
