@@ -65,12 +65,24 @@ export class LogFiles {
     scope: LogScope | null;
     text: string | null;
     before: number | null;
+    after: number | null;
     limit: number;
   }): Promise<LogEntry[]> {
     const needle = filter.text?.toLowerCase() ?? null;
+    const levelMarks = filter.levels.map(level => `"level":"${level}"`);
+    const scopeMark = filter.scope === null ? null : `"scope":"${filter.scope}"`;
     const out: LogEntry[] = [];
     for (const file of (await this.files()).reverse()) {
+      const day = FILE.exec(file)?.[1] ?? "";
+      if (filter.before !== null && day > utcDay(filter.before / 1000)) continue;
+      if (filter.after !== null && day < utcDay(filter.after / 1000)) break;
       for await (const line of linesBackward(path.join(this.opts.dir, file))) {
+        // Cheap string checks first: a full scan parses only the lines that can match.
+        const id = Number(/^\{"id":(\d+),/.exec(line)?.[1]);
+        if (filter.after !== null && id <= filter.after) return out;
+        if (filter.before !== null && id >= filter.before) continue;
+        if (!levelMarks.some(mark => line.includes(mark))) continue;
+        if (scopeMark !== null && !line.includes(scopeMark)) continue;
         if (needle !== null && !line.toLowerCase().includes(needle)) continue;
         let entry: LogEntry;
         try {
@@ -78,7 +90,6 @@ export class LogFiles {
         } catch {
           continue;
         }
-        if (filter.before !== null && entry.id >= filter.before) continue;
         if (!filter.levels.includes(entry.level)) continue;
         if (filter.scope !== null && entry.scope !== filter.scope) continue;
         if (needle !== null && !`${entry.message} ${JSON.stringify(entry.fields)}`.toLowerCase().includes(needle)) {

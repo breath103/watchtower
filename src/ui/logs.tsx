@@ -51,23 +51,30 @@ function useLogs(level: LogLevel, scope: LogScope | null, text: string | null) {
   useEffect(() => {
     const controller = new AbortController();
     signal.current = controller.signal;
-    const fetchNewest = async (first: boolean): Promise<void> => {
-      if (!first && document.hidden) return;
+    let newestId: number | null = null;
+    let busy = false;
+    const fetchNewer = async (): Promise<void> => {
+      if (busy || (newestId !== null && document.hidden)) return;
+      busy = true;
       try {
-        const { entries: newest } = await api("/api/logs", "GET", { query, signal: controller.signal });
+        const { entries: newer } = await api("/api/logs", "GET", {
+          query: { ...query, after: newestId ?? undefined },
+          signal: controller.signal,
+        });
         setError(null);
-        if (first) setHasOlder(newest.length === PAGE_SIZE);
-        const oldestNew = newest.at(-1)?.id ?? 0;
-        setEntries(previous =>
-          first || previous === null ? newest : [...newest, ...previous.filter(entry => entry.id < oldestNew)]
-        );
+        const replace = newestId === null || newer.length === PAGE_SIZE;
+        if (replace) setHasOlder(newer.length === PAGE_SIZE);
+        newestId = newer[0]?.id ?? newestId;
+        setEntries(previous => (replace || previous === null ? newer : [...newer, ...previous]));
       } catch (failure) {
         if (!controller.signal.aborted) setError(String(failure));
+      } finally {
+        busy = false;
       }
     };
     setEntries(null);
-    void fetchNewest(true);
-    const timer = setInterval(() => void fetchNewest(false), REFRESH_MS);
+    void fetchNewer();
+    const timer = setInterval(() => void fetchNewer(), REFRESH_MS);
     return () => {
       controller.abort();
       clearInterval(timer);

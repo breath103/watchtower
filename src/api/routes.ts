@@ -493,6 +493,7 @@ export function apiRoutes(deps: ApiDeps) {
         scope: z.enum(LOG_SCOPES).optional(),
         q: z.string().trim().min(1).max(200).optional(),
         before: z.coerce.number().int().optional(),
+        after: z.coerce.number().int().optional(),
         limit: z.coerce.number().int().min(1).max(500).default(200),
       },
       handler: async ({ query }) => ({
@@ -501,6 +502,7 @@ export function apiRoutes(deps: ApiDeps) {
           scope: query.scope ?? null,
           text: query.q ?? null,
           before: query.before ?? null,
+          after: query.after ?? null,
           limit: query.limit,
         }),
       }),

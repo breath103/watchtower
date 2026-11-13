@@ -61,7 +61,14 @@ describe("log files", () => {
     await writer.close();
     return { files: new LogFiles({ dir, retentionDays: 7 }), dir };
   };
-  const all = { levels: ["info", "warn", "error"] as const, scope: null, text: null, before: null, limit: 10 };
+  const all = {
+    levels: ["info", "warn", "error"] as const,
+    scope: null,
+    text: null,
+    before: null,
+    after: null,
+    limit: 10,
+  };
   const messages = async (files: LogFiles, filter: Partial<Parameters<LogFiles["query"]>[0]>) =>
     (await files.query({ ...all, ...filter })).map(found => found.message);
 
@@ -89,6 +96,9 @@ describe("log files", () => {
       "clip failed 100%",
       "thumbnail failed",
     ]);
+    const [, , third] = await files.query(all);
+    assert.deepEqual(await messages(files, { after: third?.id ?? 0 }), ["nvr updated", "clip failed 100%"]);
+    assert.deepEqual(await messages(files, { after: newest?.id ?? 0 }), []);
   });
 
   it("keeps ids increasing within one millisecond and across read chunks", async () => {

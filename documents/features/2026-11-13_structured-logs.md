@@ -93,7 +93,8 @@ bookkeeping, and can be read with ordinary tools (`tail`, `jq`).
 | `level` | minimum level: `info` (default), `warn`, `error` |
 | `scope` | one scope; omitted = all |
 | `q` | case-insensitive text match on message and fields |
-| `before` | entry id; returns entries older than it (paging) |
+| `before` | entry id; returns entries older than it (Load older) |
+| `after` | entry id; returns only entries newer than it (the page's refresh, which then reads only the end of today's file) |
 | `limit` | default 200, max 500 |
 
 Response: `{ entries: LogEntry[] }`, newest first, `LogEntry = { id, ts, level, scope, message, fields }`.
@@ -130,7 +131,7 @@ becomes `logger: Logger`, including the connector contract (`src/core/connector.
 
 - Contract change: a third-party connector or storage written against `log: (line) => void` must switch to
   `logger`. All in-tree implementations are converted in this change.
-- A text search over a rarely matching term scans up to 7 days of files (~175 MB); expect a second or two for such
-  queries. The newest-page view and its refresh stay cheap.
+- A filter that rarely matches (Errors only, an uncommon search term) scans up to 7 days of files on first load:
+  measured ~0.6–0.8 s over 210 MB. The newest page (~4 ms) and the refresh with `after` (~7 ms) stay cheap.
 - stdout carries the same volume; if the server's stdout is redirected to a file, that file grows ~25 MB a day
   unless the redirect is rotated or dropped (the JSON files are the durable log now).
