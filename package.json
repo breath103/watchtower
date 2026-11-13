@@ -4,18 +4,26 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": "./src/client.ts"
+    "./client": {
+      "types": "./src/client.ts",
+      "default": "./lib/client.js"
+    }
   },
   "scripts": {
     "build:ui": "esbuild src/ui/main.tsx --bundle --format=esm --target=es2022 --jsx=automatic --minify --outfile=dist/app.js && tailwindcss -i src/ui/globals.css -o dist/app.css --minify",
     "typecheck": "tsc --noEmit",
     "start": "npm run build:ui && tsx src/index.ts",
     "config:schema": "tsx scripts/config-schema.ts",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "build:client": "esbuild src/client.ts --format=esm --platform=neutral --target=es2022 --outfile=lib/client.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1053.0",
     "@hono/node-server": "^1.13.0",
+    "hono": "^4.0.0",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
     "@radix-ui/react-checkbox": "^1.3.8",
     "@radix-ui/react-dialog": "^1.1.20",
     "@radix-ui/react-label": "^2.1.12",
@@ -23,21 +31,17 @@
     "@radix-ui/react-slot": "^1.3.0",
     "@radix-ui/react-switch": "^1.3.4",
     "@radix-ui/react-tabs": "^1.1.18",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "hono": "^4.0.0",
-    "lucide-react": "^1.72.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "tailwind-merge": "^3.7.0",
-    "zod": "^4.3.5"
-  },
-  "devDependencies": {
     "@tailwindcss/cli": "^4.3.5",
     "@types/node": "^24.19.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "esbuild": "^0.25.0",
+    "lucide-react": "^1.72.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.1.18",
     "tsx": "^4.21.0",
     "tw-animate-css": "^1.4.0",
