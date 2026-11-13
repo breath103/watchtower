@@ -168,7 +168,7 @@ export class ThumbnailService {
         dueByNvr.set(camera.nvrId, list);
       }
       if (dueByNvr.size === 0) return;
-      for (const [nvrId, list] of dueByNvr) await this.runNvr(nvrId, list);
+      await Promise.all([...dueByNvr].map(([nvrId, list]) => this.runNvr(nvrId, list)));
       this.lastRun = Math.floor(now / 1000);
       this.lastError = null;
     } catch (error) {
@@ -183,15 +183,16 @@ export class ThumbnailService {
     for (const cfg of list) this.lastSlot.set(cfg.cameraId, cfg.slot);
     const conn = this.opts.pool.get(nvrId);
     const def = this.opts.pool.connectorOf(nvrId);
-    const images = new Map<string, Buffer | string>();
-    if (conn && def) {
-      await Promise.all(
-        list.map(async cfg => {
-          images.set(cfg.cameraId, await this.capture(conn, def.capabilities.live, cfg.cameraId, cfg.slot));
-        })
-      );
-    }
-    for (const cfg of list) await this.publish(cfg, images.get(cfg.cameraId) ?? "skipped (nvr not connected)");
+    await Promise.all(
+      list.map(async cfg =>
+        this.publish(
+          cfg,
+          conn && def
+            ? await this.capture(conn, def.capabilities.live, cfg.cameraId, cfg.slot)
+            : "skipped (nvr not connected)"
+        )
+      )
+    );
   }
 
   // A JPEG, or why there isn't one. Connectors with a snapshot endpoint use it;
