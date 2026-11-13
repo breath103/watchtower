@@ -4,18 +4,21 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": {
-      "types": "./src/client.ts",
-      "default": "./lib/client.js"
+    "./api": {
+      "types": "./dist/types/api/routes.d.ts"
     }
   },
+  "files": [
+    "dist/types"
+  ],
   "scripts": {
     "build:ui": "esbuild src/ui/main.tsx --bundle --format=esm --target=es2022 --jsx=automatic --minify --outfile=dist/app.js && tailwindcss -i src/ui/globals.css -o dist/app.css --minify",
     "typecheck": "tsc --noEmit",
     "start": "npm run build:ui && tsx src/index.ts",
     "config:schema": "tsx scripts/config-schema.ts",
     "test": "tsx --test test/*.test.ts",
-    "build:client": "esbuild src/client.ts --format=esm --platform=neutral --target=es2022 --outfile=lib/client.js"
+    "build:types": "tsc -p tsconfig.types.json",
+    "prepare": "npm run build:types"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1053.0",

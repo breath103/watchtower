@@ -6,7 +6,7 @@ interface TimelineCamera {
   recordings: Array<{ start: number; end: number }>;
 }
 
-interface TimelineResult {
+export interface TimelineResult {
   nvr: string;
   from: number;
   to: number;

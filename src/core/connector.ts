@@ -84,7 +84,7 @@ export interface ConnectorContext {
   cameras: Array<{ id: string; metadata: Record<string, unknown> }>;
 }
 
-interface StreamOption {
+export interface StreamOption {
   id: string;
   label: string;
 }

@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { ZodError } from "zod";
 
 import { camerasFilter, filterCameras, jsonQuery } from "../src/api/helpers.js";
-import { createWatchtowerClient } from "../src/client.js";
+import type { WatchtowerApi } from "../src/api/routes.js";
 import { Database } from "../src/db/index.js";
 
 function seeded(): Database {
@@ -77,11 +77,10 @@ describe("camera tag filter", () => {
     assert.throws(() => param.parse('{"nvrs":{"tags":{"location":[]}}}'), ZodError);
   });
 
-  it("types the typed client's filter as an object", () => {
-    const client = createWatchtowerClient({ baseUrl: "http://127.0.0.1:1" });
-    // Compile-time only: never awaited.
-    const typed = (): unknown =>
-      client("/api/v1/cameras", "GET", { query: { filter: { nvrs: { tags: { location: ["HQ"] } } } } });
-    assert.equal(typeof typed, "function");
+  it("types the filter query param as an object", () => {
+    const query: WatchtowerApi["/api/v1/cameras"]["GET"]["query"] = {
+      filter: { nvrs: { tags: { location: ["HQ"] } } },
+    };
+    assert.deepEqual(query.filter?.nvrs?.tags, { location: ["HQ"] });
   });
 });

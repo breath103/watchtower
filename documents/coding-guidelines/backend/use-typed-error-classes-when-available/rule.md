@@ -23,6 +23,6 @@ if (error instanceof Error && error.message.includes("not found")) return null;
 if ((error as { name?: string }).name === "ZodError") ...
 ```
 
-`WatchtowerError` (`src/client.ts`) carries `status` and `code` from the server's `{ error: { code, message } }` body.
+`WatchtowerError` (`src/ui/api.ts`) carries `status` and `code` from the server's `{ error: { code, message } }` body.
 When an SDK exports typed errors (e.g. `@aws-sdk/client-s3`'s `NoSuchKey`), check for those instead of catching
 everything.

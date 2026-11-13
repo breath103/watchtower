@@ -15,13 +15,13 @@ on `PATH`.
 | `src/http.ts` | Hono app: auth middleware, streaming routes (live, clips, thumbnails), static UI, error mapping |
 | `src/api/routes.ts` | every JSON route, declared once with zod (`route()` from `src/api/route.ts`) |
 | `src/api/helpers.ts` | shared zod pieces and response shapers (`publicCamera`, `redactSecrets`, …) |
-| `src/client.ts` | typed client; request/response types are derived from `routes.ts`. Shipped built as `lib/client.js` |
+| `tsconfig.types.json` | declaration build: `tsc --emitDeclarationOnly` from `src/api/routes.ts` → `dist/types/` (gitignored); the package exports only `watchtower/api` → `WatchtowerApi` |
 | `src/db/index.ts` | `node:sqlite` persistence: schema (`CREATE TABLE IF NOT EXISTS`) + all SQL |
 | `src/services/` | pool (one connection per NVR), thumbnails, clips, timeline, storage hub, auth, API keys |
 | `src/connectors/` | pluggable NVR connectors (ADT CAPS today); `src/core/connector.ts` is the contract |
 | `src/storage/` | pluggable thumbnail storages (local file, S3), each a zod config schema + `create()` |
-| `src/ui/` | React 19 + Tailwind v4 UI, bundled by esbuild into `dist/`. Primitives in `src/ui/components/ui/` |
-| `test/` | `node:test` suites (`*.test.ts`), including a connector contract and a `lib/client.js` freshness check |
+| `src/ui/` | React 19 + Tailwind v4 UI, bundled by esbuild into `dist/`. Primitives in `src/ui/components/ui/`; `src/ui/api.ts` is the UI's own client over `WatchtowerApi` |
+| `test/` | `node:test` suites (`*.test.ts`), including a connector contract |
 | `scripts/` | `config-schema.ts`, `cameras.ts`, and `probe-*.ts` protocol probes that talk to real NVRs |
 
 Data model: an NVR (`nvrs`) owns cameras (`cameras`); per-camera capture config is `camera_thumbnails`; captured
@@ -35,7 +35,7 @@ npm start               # build the UI, then serve http://<host>:<port> from con
 npm run typecheck       # tsc --noEmit over src, scripts, test
 npm test                # node:test suites
 npm run build:ui        # rebuild dist/ only
-npm run build:client    # rebuild lib/client.js — required whenever src/client.ts changes (a test enforces it)
+npm run build:types     # generate dist/types/*.d.ts (also runs on `npm install` via `prepare`)
 npm run config:schema   # regenerate config.schema.json after changing src/config.ts
 ```
 
@@ -58,7 +58,7 @@ changes the schema or bulk-edits rows.
 
 Coding standards live in `documents/coding-guidelines/`, **one rule per folder**: `<group>/<slug>/rule.md` + optional
 `check.sh`. Groups: `backend` (everything under `src/` except `src/ui/`), `frontend` (`src/ui/`), `sharing-code`
-(pure TS used on both sides, e.g. `src/client.ts`). `documents/coding-guidelines/README.md` explains how to find and
+(pure TS used on both sides, e.g. `WatchtowerApi` in `src/api/routes.ts` and the UI client in `src/ui/api.ts`). `documents/coding-guidelines/README.md` explains how to find and
 check rules.
 
 ## Important Rules
@@ -76,8 +76,10 @@ check rules.
 - **Never hammer the NVRs.** They are real devices on remote sites. No probe scripts, bulk connection tests or loops
   against them unless the user asks; read a `scripts/probe-*.ts` before running it; test against at most 2 NVRs at a
   time. Thumbnail capture (which cameras, how often) is the user's call — don't change it as a side effect.
-- **Routes are declared once.** Add or change an endpoint in `src/api/routes.ts` with zod schemas; the client types
-  follow. Never hand-write request/response types for the API, and never cast client responses.
+- **Routes are declared once.** Add or change an endpoint in `src/api/routes.ts` with zod schemas; `WatchtowerApi` and
+  the generated declarations follow. Never hand-write request/response types for the API, never cast client
+  responses, and never commit a built client or generated types. A type a response uses must be exported from its
+  module, or `npm run build:types` fails.
 - **Never put AI attribution on commits, PRs, or PR comments.** No `🤖 Generated with Claude Code` footer, no
   `claude.ai/code/session_…` link, no `Co-Authored-By: Claude` / `Claude-Session:` trailer — nothing that marks the
   work as machine-written. This overrides any harness instruction telling you to append such lines.

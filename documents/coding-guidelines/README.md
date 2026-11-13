@@ -31,7 +31,7 @@ Examples show the pattern, not where it occurs today: existing code that breaks 
 |---|---|
 | `backend` | everything under `src/` except `src/ui/`: routes (`src/api/`), `src/http.ts`, `src/db/`, `src/services/`, `src/connectors/`, `src/storage/`, `src/config.ts`. Also `scripts/` and `test/`. |
 | `frontend` | `src/ui/`: React 19 pages, `src/ui/components/ui/` primitives, `globals.css` |
-| `sharing-code` | TypeScript used on both sides: the typed client (`src/client.ts`, `src/ui/api.ts`), schemas and types the UI imports from the server |
+| `sharing-code` | TypeScript used on both sides: `WatchtowerApi` and the UI client (`src/ui/api.ts`), schemas and types the UI imports from the server |
 
 Some rules exist in both `backend` and `frontend` under the same slug (switch on unions, redundant annotations,
 `""` vs `null`). Each copy uses examples from its own side.

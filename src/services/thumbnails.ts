@@ -24,7 +24,7 @@ const RETENTION_BATCH = 500;
 export const thumbnailSlot = (nowMs: number, frequencyS: number): number =>
   Math.floor(nowMs / 1000 / frequencyS) * frequencyS;
 
-interface CameraThumbState {
+export interface CameraThumbState {
   camera: string;
   lastTs: number | null;
   ok: boolean;

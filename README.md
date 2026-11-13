@@ -52,19 +52,45 @@ Everything else (NVRs, storages, per-camera capture, API keys) lives in the sqli
 
 Watchtower has no TLS of its own. Put it behind a reverse proxy that terminates HTTPS before exposing it.
 
-## Typed client
+## Typed API
 
-Routes are declared once (`src/api/routes.ts`: zod schemas for input, the handler's return type for output), and
-the client derives every request and response type from them, so nothing is typed by hand.
+Routes are declared once (`src/api/routes.ts`: zod schemas for input, the handler's return type for output). The
+compiler generates declarations from them (`npm run build:types` → `dist/types/`, gitignored), and the package
+exports only those types:
+
+```jsonc
+// your package.json — npm runs watchtower's `prepare` (build:types) on install
+"dependencies": { "watchtower": "github:<owner>/watchtower" }
+```
 
 ```ts
-import { createWatchtowerClient } from "watchtower/client";
+import type { WatchtowerApi } from "watchtower/api";
 
-const watchtower = createWatchtowerClient({
-  baseUrl: "https://watchtower.example.com",
-  apiKey: process.env.WATCHTOWER_API_KEY,
-  timeoutMs: 5000,
-});
+type Endpoint<P extends keyof WatchtowerApi, M extends keyof WatchtowerApi[P]> = WatchtowerApi[P][M];
+type Input<E> = (E extends { params: infer T } ? ([T] extends [never] ? unknown : { params: T }) : unknown) &
+  (E extends { query: infer T } ? ([T] extends [never] ? unknown : { query: T }) : unknown) &
+  (E extends { body: infer T } ? ([T] extends [never] ? unknown : { body: T }) : unknown);
+
+async function watchtower<P extends keyof WatchtowerApi & string, M extends keyof WatchtowerApi[P] & string>(
+  path: P,
+  method: M,
+  input: Input<Endpoint<P, M>> = {} as Input<Endpoint<P, M>>
+): Promise<Endpoint<P, M> extends { response: infer R } ? R : never> {
+  const { params, query, body } = input as { params?: Record<string, string>; query?: Record<string, unknown>; body?: unknown };
+  let url = BASE_URL + path.replace(/:(\w+)/g, (_, key: string) => encodeURIComponent(params?.[key] ?? ""));
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value !== undefined) search.set(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+  }
+  if (search.size > 0) url += `?${search}`;
+  const response = await fetch(url, {
+    method,
+    headers: { Authorization: `Bearer ${API_KEY}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`${method} ${path} → HTTP ${response.status}`);
+  return response.json();
+}
 
 const { nvrs } = await watchtower("/api/v1/cameras", "GET");
 // nvrs: { id, name, tags, cameras: { id, name, tags, thumbnail: { every } | null }[] }[]
@@ -79,8 +105,8 @@ await watchtower("/api/v1/cameras", "GET", {
 // A `cameras` filter keeps only matching cameras and drops NVRs left with none.
 ```
 
-A wrong path, a missing param, or a wrong field type is a compile error. Errors throw `WatchtowerError`
-(`status`, `code`, `message`).
+A wrong path, a missing param, or a wrong field type is a compile error. The consumer type-checks against the
+generated declarations only, never watchtower's source; keep `skipLibCheck` on. Object query values are sent as JSON.
 
 ## How it talks to NVRs
 

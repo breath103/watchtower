@@ -28,7 +28,7 @@ Groups and the paths they govern:
 
 - `backend` — everything under `src/` except `src/ui/` (routes, db, services, connectors, storage), plus `scripts/`
 - `frontend` — `src/ui/`
-- `sharing-code` — pure TS used on both sides (`src/client.ts`, types the UI imports from the server)
+- `sharing-code` — pure TS used on both sides (`WatchtowerApi`, the UI client `src/ui/api.ts`, types the UI imports from the server)
 
 Run the tooling with the repo's tsx (never `npx`):
 

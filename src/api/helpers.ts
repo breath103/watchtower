@@ -82,7 +82,7 @@ const entityFilter = z.strictObject({ tags: z.record(z.string(), z.array(z.strin
 
 export const camerasFilter = z.strictObject({ nvrs: entityFilter.optional(), cameras: entityFilter.optional() });
 
-// The typed client JSON-encodes object query values (src/client.ts).
+// Clients send object query values as JSON (src/ui/api.ts).
 export const jsonQuery = <T extends z.ZodType>(schema: T) =>
   z
     .string()
