@@ -1,6 +1,7 @@
 // JSON routes declared once: zod schemas for input, the handler's return type
-// for output. `ApiOf` turns a route list into the type the typed client
-// (src/client.ts) consumes, so no request/response type is written twice.
+// for output. `ApiOf` turns a route list into the type every client uses
+// (src/ui/api.ts, and other apps via the generated declarations), so no
+// request/response type is written twice.
 
 import type { Context, Hono } from "hono";
 import { z } from "zod";

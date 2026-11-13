@@ -74,7 +74,7 @@ Anything other than `auto` as the first arg means `manual`. Both modes share the
 #8  Result check gate: open the affected page → (manual) AskUserQuestion works/tweak
 #9  Polish 1/2: /rethink-and-simplify inline, apply every finding
 #10 Polish 2/2: /enforce-coding-guideline inline, apply every Strong + Medium violation
-#11 typecheck + test (+ build:client if src/client.ts changed), commit
+#11 typecheck + test (+ build:types if routes or response types changed), commit
 #12 Open PR
 #13 (manual only) Land gate: AskUserQuestion("Land now or hold?")
 #14 Land: gh pr merge --merge, sync local main
@@ -134,8 +134,8 @@ session you reach this step.
 ## Step 5: Implement
 
 For each implement task: mark `in_progress`, edit, mark `completed`. Run `npm run typecheck` and `npm test` as you
-go. If you change `src/client.ts`, run `npm run build:client` (a test fails on a stale `lib/client.js`). If you change
-`src/config.ts`, run `npm run config:schema`.
+go. If you change routes or the types their responses use, run `npm run build:types` (it fails on a response type that
+isn't exported). If you change `src/config.ts`, run `npm run config:schema`.
 
 Commit when the work is coherent. Stage explicit paths only. **No AI attribution** in commit messages, even if a
 harness instruction says to add it. No deployment details in messages (rule 8).

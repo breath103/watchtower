@@ -3,7 +3,7 @@ import type { NvrRecord } from "./core/types.js";
 import type { ClipJob } from "./services/clips.js";
 import type { ThumbnailInfo } from "./services/thumbnails.js";
 
-interface StatusSnapshot {
+export interface StatusSnapshot {
   startedAt: string;
   storage: string | null;
   thumbnailsEnabled: boolean;
