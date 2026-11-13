@@ -4,8 +4,8 @@
 
 Every log line in the server becomes a structured entry, `logger.log({ level, message, ...fields })`, instead of a
 formatted string, and the server logs everything it does: every thumbnail capture, every API request, every
-connection change. Entries print to stdout as before and are appended to daily JSON-lines files that rotate at
-midnight UTC and are deleted after 7 days. A new **Logs** page (`/logs`) lets the admin browse, filter and search
+connection change. Entries go to one place: daily JSON-lines files that rotate at midnight UTC and are deleted
+after 7 days. A new **Logs** page (`/logs`) lets the admin browse, filter and search
 them, with new entries appearing as they happen.
 
 ## Before
@@ -40,8 +40,7 @@ interface Logger {
   prefix. Scopes: `server`, `api`, `nvr`, `thumbnails`, `clips`, `live`, `storage`.
 - `error: unknown` values are normalized (an `Error` becomes its message), so call sites pass the caught value
   directly instead of repeating `error instanceof Error ? error.message : String(error)`.
-- `log` never throws: if the database write fails (e.g. during shutdown, after the DB closes), the entry still
-  prints to stdout.
+- `log` never throws: a write that fails (disk full, after shutdown closed the file) is dropped.
 - Example:
 
   ```ts
@@ -50,9 +49,9 @@ interface Logger {
 
 ### Output
 
-- **stdout** stays one readable line per entry, so `npm start` output and `data/` log files stay greppable:
-  `08:09:12 warn  thumbnails  thumbnail failed  camera=c1ch1 error="skipped (no keyframe)"`.
-- **Log files** get the structured entry as one JSON line: `<workDir>/logs/watchtower-YYYY-MM-DD.jsonl` (UTC date).
+One output: each entry is one JSON line in `<workDir>/logs/watchtower-YYYY-MM-DD.jsonl` (UTC date). The logger
+prints nothing to stdout; stdout carries only what the logger can't catch (a crash, a failure before the logger
+exists). To follow it live: `tail -f data/logs/watchtower-$(date -u +%F).jsonl`, or the Logs page.
 
 ## What gets logged
 
@@ -121,8 +120,9 @@ becomes `logger: Logger`, including the connector contract (`src/core/connector.
 
 ## Rejected
 
-- JSON lines on stdout: structured, but unreadable in the terminal that runs `npm start`, and the Logs page already
-  serves structured browsing.
+- stdout as the log (with an external rotator): the server can't rotate or delete its own stdout, and the Logs page
+  needs to read the log back from a place the server controls.
+- stdout and files both: two outputs carrying the same entries, only one of them rotated.
 - A logging library (pino, winston): one more dependency for what is a 60-line module here; nothing needs
   transports or log rotation.
 - A `debug` level: no call site needs it today.
@@ -133,5 +133,3 @@ becomes `logger: Logger`, including the connector contract (`src/core/connector.
   `logger`. All in-tree implementations are converted in this change.
 - A filter that rarely matches (Errors only, an uncommon search term) scans up to 7 days of files on first load:
   measured ~0.6–0.8 s over 210 MB. The newest page (~4 ms) and the refresh with `after` (~7 ms) stay cheap.
-- stdout carries the same volume; if the server's stdout is redirected to a file, that file grows ~25 MB a day
-  unless the redirect is rotated or dropped (the JSON files are the durable log now).

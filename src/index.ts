@@ -109,11 +109,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  createLogger(null).log({
-    level: "error",
-    message: "startup failed",
-    error,
-    stack: error instanceof Error ? (error.stack ?? null) : null,
-  });
+  console.error(error);
   process.exit(1);
 });

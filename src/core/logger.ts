@@ -36,22 +36,7 @@ function logValue(value: unknown): LogValue | undefined {
   return JSON.stringify(value) ?? String(value);
 }
 
-function line(entry: NewLogEntry): string {
-  const fields = Object.entries(entry.fields).map(
-    ([key, value]) => `${key}=${typeof value === "string" && !/[\s"=]/.test(value) ? value : JSON.stringify(value)}`
-  );
-  return [
-    new Date(entry.ts).toISOString().slice(11, 19),
-    entry.level.padEnd(5),
-    entry.scope.padEnd(10),
-    entry.message,
-    ...fields,
-  ].join(" ");
-}
-
-// persist must not be trusted to succeed: at shutdown the database closes while
-// in-flight work is still logging.
-export function createLogger(persist: ((entry: NewLogEntry) => void) | null, bound: LogContext = {}): Logger {
+export function createLogger(write: (entry: NewLogEntry) => void, bound: LogContext = {}): Logger {
   return {
     log: ({ level, message, scope, ...rest }) => {
       const fields: Record<string, LogValue> = {};
@@ -59,12 +44,8 @@ export function createLogger(persist: ((entry: NewLogEntry) => void) | null, bou
         const normalized = key === "scope" ? undefined : logValue(value);
         if (normalized !== undefined) fields[key] = normalized;
       }
-      const entry: NewLogEntry = { ts: Date.now(), level, scope: scope ?? bound.scope ?? "server", message, fields };
-      console.log(line(entry));
-      try {
-        persist?.(entry);
-      } catch {}
+      write({ ts: Date.now(), level, scope: scope ?? bound.scope ?? "server", message, fields });
     },
-    with: context => createLogger(persist, { ...bound, ...context }),
+    with: context => createLogger(write, { ...bound, ...context }),
   };
 }

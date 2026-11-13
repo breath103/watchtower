@@ -8,8 +8,7 @@ import { createLogger, type NewLogEntry } from "../src/core/logger.js";
 import { LogFiles } from "../src/services/log-files.js";
 
 describe("logger", () => {
-  it("binds scope and context, normalizes errors, drops undefined", t => {
-    const lines = t.mock.method(console, "log", () => undefined);
+  it("binds scope and context, normalizes errors, drops undefined", () => {
     const saved: NewLogEntry[] = [];
     const logger = createLogger(entry => saved.push(entry)).with({ scope: "nvr", nvr: "nvr-1" });
     logger.log({
@@ -19,23 +18,24 @@ describe("logger", () => {
       error: new Error("closed"),
       ignored: undefined,
     });
-
     assert.equal(saved.length, 1);
     assert.equal(saved[0]?.scope, "nvr");
+    assert.equal(saved[0]?.message, "channel open failed");
     assert.deepEqual(saved[0]?.fields, { nvr: "nvr-1", camera: "nvr-1-2", error: "closed" });
-    assert.match(
-      String(lines.mock.calls[0]?.arguments[0]),
-      /^\d\d:\d\d:\d\d warn {2}nvr {8}channel open failed nvr=nvr-1 camera=nvr-1-2 error=closed$/
-    );
   });
 
-  it("still prints when persisting throws", t => {
-    const lines = t.mock.method(console, "log", () => undefined);
-    const logger = createLogger(() => {
-      throw new Error("database is not open");
-    });
-    assert.doesNotThrow(() => logger.log({ level: "info", message: "shutting down" }));
-    assert.equal(lines.mock.callCount(), 1);
+  it("drops writes after the log files close", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "watchtower-logs-"));
+    const files = new LogFiles({ dir, retentionDays: 7 });
+    const logger = createLogger(entry => files.write(entry));
+    logger.log({ level: "info", message: "before close" });
+    await files.close();
+    assert.doesNotThrow(() => logger.log({ level: "info", message: "after close" }));
+    const all = { levels: ["info"] as const, scope: null, text: null, before: null, after: null, limit: 10 };
+    assert.deepEqual(
+      (await new LogFiles({ dir, retentionDays: 7 }).query(all)).map(entry => entry.message),
+      ["before close"]
+    );
   });
 });
 
