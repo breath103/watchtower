@@ -11,6 +11,7 @@ import { cameraOpener, checkClipRange, clipQuery } from "./api/helpers.js";
 import { mount } from "./api/route.js";
 import { type ApiDeps, apiRoutes } from "./api/routes.js";
 import { ClipCache, clipCacheKey } from "./clip-cache.js";
+import type { LogLevel } from "./core/logger.js";
 import { requireApiKey } from "./services/api-keys.js";
 import { type ClipPumpInfo, type PackagedStream, startClipFmp4, startLiveFmp4 } from "./services/media.js";
 
@@ -88,8 +89,14 @@ async function videoResponse(c: Context, file: string, extraHeaders: Record<stri
   }
 }
 
+function levelForStatus(status: number): LogLevel {
+  if (status >= 500) return "error";
+  if (status >= 400) return "warn";
+  return "info";
+}
+
 export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
-  const { auth, db, pool, clips, cache, hub, log } = opts;
+  const { auth, db, pool, clips, cache, hub, logger } = opts;
   const app = new Hono();
   const openCamera = cameraOpener(db, pool);
 
@@ -106,9 +113,25 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
     c.header("Cache-Control", "no-store");
     return c.html(await fsp.readFile(path.join(import.meta.dirname, "index.html"), "utf8"));
   };
-  for (const route of ["/", "/settings"]) app.get(route, page);
+  for (const route of ["/", "/settings", "/logs"]) app.get(route, page);
   app.get("/app.js", asset("app.js", "text/javascript; charset=utf-8"));
   app.get("/app.css", asset("app.css", "text/css; charset=utf-8"));
+
+  const requestLogger = logger.with({ scope: "api" });
+  app.use("/api/*", async (c, next) => {
+    const started = Date.now();
+    await next();
+    // The Logs page polls this route; logging it would fill the page with itself.
+    if (c.req.method === "GET" && c.req.path === "/api/logs") return;
+    requestLogger.log({
+      level: levelForStatus(c.res.status),
+      message: "request",
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      ms: Date.now() - started,
+    });
+  });
 
   const PUBLIC = new Set(["/api/session", "/api/login", "/api/logout"]);
   app.use("/api/*", (c, next) =>
@@ -123,8 +146,7 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
       live = await startLiveFmp4(subscription, {
         transcode: c.req.query("transcode") === "h264",
         signal: c.req.raw.signal,
-        log,
-        label: camera.id,
+        logger: logger.with({ scope: "live", camera: camera.id }),
       });
     } catch (error) {
       subscription.stop();
@@ -149,6 +171,7 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
     const { camera, conn, stream: chosen } = openCamera(query.camera, "playback", query.stream);
 
     const transcode = query.transcode === "h264";
+    const clipLogger = logger.with({ scope: "clips", camera: camera.id });
     const cacheKey = clipCacheKey({
       nvr: camera.nvrId,
       camera: camera.id,
@@ -170,7 +193,7 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
     try {
       cacheWriter = await cache.begin(cacheKey, transcode);
     } catch (error) {
-      log(`clip cache open failed: ${error instanceof Error ? error.message : String(error)}`);
+      clipLogger.log({ level: "warn", message: "clip cache open failed", error });
     }
     const tee = cacheWriter;
     let info: ClipPumpInfo;
@@ -187,12 +210,11 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
                 await tee.feed(frame);
               } catch (error) {
                 teeFailed = true;
-                log(`clip cache write failed: ${error instanceof Error ? error.message : String(error)}`);
+                clipLogger.log({ level: "warn", message: "clip cache write failed", error });
               }
             }
           : undefined,
-        log,
-        label: camera.id,
+        logger: clipLogger,
       });
     } catch (error) {
       await tee?.abort().catch(() => undefined);
@@ -218,7 +240,7 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
         if (tee) {
           if (complete) {
             await tee.finish().catch(error => {
-              log(`clip cache finalize failed: ${error instanceof Error ? error.message : String(error)}`);
+              clipLogger.log({ level: "warn", message: "clip cache finalize failed", error });
             });
           } else {
             await tee.abort().catch(() => undefined);
@@ -249,7 +271,7 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
   });
 
   app.use("/api/v1/*", requireApiKey(db));
-  mount(app, apiRoutes(opts));
+  mount(app, apiRoutes({ ...opts, logger: requestLogger }));
 
   app.onError((error, c) => {
     if (error instanceof HTTPException) {
@@ -259,6 +281,14 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
     if (error instanceof ZodError) {
       return c.json({ error: { code: "bad_request", message: z.prettifyError(error) } }, 400);
     }
+    requestLogger.log({
+      level: "error",
+      message: "request failed",
+      method: c.req.method,
+      path: c.req.path,
+      error,
+      stack: error.stack ?? null,
+    });
     return c.json({ error: { code: "internal", message: error.message } }, 500);
   });
 

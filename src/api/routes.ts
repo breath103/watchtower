@@ -2,11 +2,13 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 
 import type { ConnectionStatus } from "../core/connector.js";
+import { LOG_LEVELS, LOG_SCOPES, type Logger } from "../core/logger.js";
 import { tagSchema } from "../core/types.js";
 import type { Registry } from "../core/registry.js";
 import { type Database, DEFAULT_THUMBNAIL_FREQUENCY_S } from "../db/index.js";
 import { createApiKey } from "../services/api-keys.js";
 import type { Auth } from "../services/auth.js";
+import type { LogFiles } from "../services/log-files.js";
 import type { ClipService } from "../services/clips.js";
 import type { ConnectionPool } from "../services/pool.js";
 import type { StorageHub } from "../services/storage-hub.js";
@@ -39,14 +41,16 @@ export interface ApiDeps {
   thumbnails: ThumbnailService;
   hub: StorageHub;
   startedAt: number;
-  log: (line: string) => void;
+  logger: Logger;
+  logFiles: LogFiles;
 }
 
 const routes = <const T extends RouteDef[]>(...defs: T): T => defs;
 
 const wizardBody = { connector: z.string(), connection: z.unknown() };
 
-export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnails, hub, startedAt, log }: ApiDeps) {
+export function apiRoutes(deps: ApiDeps) {
+  const { auth, db, registry, pool, timeline, clips, thumbnails, hub, startedAt, logger, logFiles } = deps;
   const openCamera = cameraOpener(db, pool);
   const listStorages = () => db.listStorages().map(record => ({ ...record, config: redactSecrets(record.config) }));
 
@@ -60,7 +64,7 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
       handler: async ({ c, body }) => {
         if (!auth.matches(body.username, body.password)) {
           await new Promise(resolve => setTimeout(resolve, 500));
-          log(`login failed for "${body.username}"`);
+          logger.log({ level: "warn", message: "login failed", username: body.username });
           throw new HTTPException(401, { message: "wrong username or password" });
         }
         await auth.signIn(c);
@@ -203,7 +207,13 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
           body.thumbnails ?? true
         );
         pool.invalidate(nvrId);
-        log(`nvr ${nvrId} registered (${body.connector}, ${body.cameras.length} camera(s))`);
+        logger.log({
+          level: "info",
+          message: "nvr registered",
+          nvr: nvrId,
+          connector: body.connector,
+          cameras: body.cameras.length,
+        });
         return { id: nvrId };
       },
     }),
@@ -242,7 +252,7 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
           .connectionConfigSchema.parse(mergeConfig(stored, body.connection)) as Record<string, unknown>;
         db.updateNvr({ id: nvr.id, name: body.name, connection: { type, ...connection } }, body.cameras ?? []);
         pool.invalidate(nvr.id);
-        log(`nvr ${nvr.id} updated`);
+        logger.log({ level: "info", message: "nvr updated", nvr: nvr.id });
         return { ok: true };
       },
     }),
@@ -252,7 +262,7 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
         if (!db.getNvr(params.id)) throw new HTTPException(404, { message: "nvr not found" });
         pool.invalidate(params.id);
         db.deleteNvr(params.id);
-        log(`nvr ${params.id} removed`);
+        logger.log({ level: "info", message: "nvr removed", nvr: params.id });
         return { ok: true };
       },
     }),
@@ -300,7 +310,7 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
         if (enabled) thumbnails.start();
         else thumbnails.stop();
         db.setSetting("thumbnails.enabled", enabled ? "1" : "0");
-        log(`thumbnails: ${enabled ? "on" : "off"}`);
+        logger.log({ level: "info", message: "thumbnail capture switched", enabled });
         return { ok: true, enabled };
       },
     }),
@@ -327,7 +337,7 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
         db.upsertStorage({ id, type: body.type, config: parsed });
         hub.invalidate(id);
         if (!db.getSetting("defaultStorage")) hub.setDefault(id);
-        log(`storage added: ${id} (${body.type})`);
+        logger.log({ level: "info", message: "storage added", storage: id, type: body.type });
         return { ok: true, id };
       },
     }),
@@ -340,7 +350,7 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
         const parsed = registry.storage(record.type).configSchema.parse(mergeConfig(record.config, body.config));
         db.upsertStorage({ id: record.id, type: record.type, config: parsed as Record<string, unknown> });
         hub.invalidate(record.id);
-        log(`storage updated: ${record.id}`);
+        logger.log({ level: "info", message: "storage updated", storage: record.id });
         return { ok: true };
       },
     }),
@@ -353,7 +363,7 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
         }
         db.deleteStorage(params.id);
         hub.invalidate(params.id);
-        log(`storage deleted: ${params.id}`);
+        logger.log({ level: "info", message: "storage deleted", storage: params.id });
         return { ok: true };
       },
     }),
@@ -362,7 +372,6 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
       body: { id: z.string() },
       handler: ({ body: { id } }) => {
         hub.setDefault(id);
-        log(`default storage: ${id}`);
         return { ok: true, id };
       },
     }),
@@ -401,7 +410,12 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
             frequencyS: current?.frequencyS ?? DEFAULT_THUMBNAIL_FREQUENCY_S,
           });
         }
-        log(`thumbnail config bulk: ${body.cameraIds.length} camera(s) ${body.enabled ? "on" : "off"}`);
+        logger.log({
+          level: "info",
+          message: "thumbnail config changed",
+          cameras: body.cameraIds.length,
+          enabled: body.enabled,
+        });
         return { ok: true };
       },
     }),
@@ -423,9 +437,14 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
           frequencyS: body.frequencyS ?? current?.frequencyS ?? DEFAULT_THUMBNAIL_FREQUENCY_S,
         };
         db.upsertThumbnailConfig(merged);
-        log(
-          `thumbnail config ${body.cameraId}: ${merged.enabled ? "on" : "off"} every ${merged.frequencyS}s → ${merged.storageId ?? "default storage"}`
-        );
+        logger.log({
+          level: "info",
+          message: "thumbnail config changed",
+          camera: merged.cameraId,
+          enabled: merged.enabled,
+          frequencyS: merged.frequencyS,
+          storage: merged.storageId,
+        });
         return merged;
       },
     }),
@@ -439,7 +458,12 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
           throw new HTTPException(404, { message: "no nvr or camera with that id" });
         }
         db.setTags(params.id, body.tags);
-        log(`tags ${params.id}: ${body.tags.map(tag => `${tag.type}=${tag.value}`).join(", ") || "(none)"}`);
+        logger.log({
+          level: "info",
+          message: "tags set",
+          id: params.id,
+          tags: body.tags.map(tag => `${tag.type}=${tag.value}`).join(", "),
+        });
         return { ok: true };
       },
     }),
@@ -450,7 +474,7 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
       body: { name: z.string().trim().min(1).max(100) },
       handler: ({ body }) => {
         const { record, key } = createApiKey(db, body.name);
-        log(`api key created: ${record.name} (…${record.hint})`);
+        logger.log({ level: "info", message: "api key created", name: record.name, hint: record.hint });
         return { ...record, key };
       },
     }),
@@ -458,9 +482,30 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
     route("/api/keys/:id", "DELETE", {
       handler: ({ params }) => {
         if (!db.deleteApiKey(params.id)) throw new HTTPException(404, { message: "api key not found" });
-        log(`api key revoked: ${params.id}`);
+        logger.log({ level: "info", message: "api key revoked", key: params.id });
         return { ok: true };
       },
+    }),
+
+    route("/api/logs", "GET", {
+      query: {
+        level: z.enum(LOG_LEVELS).default("info"),
+        scope: z.enum(LOG_SCOPES).optional(),
+        q: z.string().trim().min(1).max(200).optional(),
+        before: z.coerce.number().int().optional(),
+        after: z.coerce.number().int().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      },
+      handler: async ({ query }) => ({
+        entries: await logFiles.query({
+          levels: LOG_LEVELS.slice(LOG_LEVELS.indexOf(query.level)),
+          scope: query.scope ?? null,
+          text: query.q ?? null,
+          before: query.before ?? null,
+          after: query.after ?? null,
+          limit: query.limit,
+        }),
+      }),
     }),
 
     route("/api/v1/cameras", "GET", {

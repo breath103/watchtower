@@ -3,13 +3,14 @@
 // connections for the connect wizard (test/discover).
 
 import type { ConnectionStatus, ConnectorConnection, ConnectorDef } from "../core/connector.js";
+import type { Logger } from "../core/logger.js";
 import type { Registry } from "../core/registry.js";
 import type { Database } from "../db/index.js";
 
 export class ConnectionPool {
   private readonly conns = new Map<string, ConnectorConnection>();
 
-  constructor(private readonly opts: { db: Database; registry: Registry; log: (line: string) => void }) {}
+  constructor(private readonly opts: { db: Database; registry: Registry; logger: Logger }) {}
 
   get(nvrId: string): ConnectorConnection | null {
     const existing = this.conns.get(nvrId);
@@ -19,7 +20,7 @@ export class ConnectionPool {
     const def = this.opts.registry.connector(record.connection.type);
     const config = def.connectionConfigSchema.parse(record.connection);
     const conn = def.create(config, {
-      log: line => this.opts.log(`${nvrId}: ${line}`),
+      logger: this.opts.logger.with({ scope: "nvr", nvr: nvrId }),
       cameras: this.opts.db.listCameras(nvrId).map(camera => ({ id: camera.id, metadata: camera.metadata })),
     });
     this.conns.set(nvrId, conn);
@@ -50,7 +51,7 @@ export class ConnectionPool {
     const def = this.opts.registry.connector(connectorId);
     const config = def.connectionConfigSchema.parse(rawConfig);
     return def.create(config, {
-      log: line => this.opts.log(`[${connectorId}] ${line}`),
+      logger: this.opts.logger.with({ scope: "nvr", connector: connectorId }),
       cameras: [],
     });
   }

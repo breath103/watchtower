@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-export const ROUTES = { cameras: "/", settings: "/settings" } as const;
+export const ROUTES = { cameras: "/", logs: "/logs", settings: "/settings" } as const;
 export type Route = keyof typeof ROUTES;
 
 const listeners = new Set<() => void>();

@@ -16,5 +16,5 @@ export const AdtcapsConnector = defineConnector({
     { id: "main", label: "Main stream" },
     { id: "sub", label: "Sub stream" },
   ],
-  create: (config, ctx) => new AdtcapsConnection({ endpoint: config, cameras: ctx.cameras, log: ctx.log }),
+  create: (config, ctx) => new AdtcapsConnection({ endpoint: config, cameras: ctx.cameras, logger: ctx.logger }),
 });
