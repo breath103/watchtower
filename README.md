@@ -67,7 +67,16 @@ const watchtower = createWatchtowerClient({
 });
 
 const { nvrs } = await watchtower("/api/v1/cameras", "GET");
-// nvrs: { id, name, cameras: { id, name, thumbnail: { every } | null }[] }[]
+// nvrs: { id, name, tags, cameras: { id, name, tags, thumbnail: { every } | null }[] }[]
+// tags: { type, value }[]
+
+// Filter by tag: within a type any listed value matches; every listed type must match.
+await watchtower("/api/v1/cameras", "GET", {
+  query: { filter: { nvrs: { tags: { location: ["HQ", "Lab"] } } } },
+});
+// Over plain HTTP the filter is URL-encoded JSON:
+//   GET /api/v1/cameras?filter={"nvrs":{"tags":{"location":["HQ","Lab"]}}}
+// A `cameras` filter keeps only matching cameras and drops NVRs left with none.
 ```
 
 A wrong path, a missing param, or a wrong field type is a compile error. Errors throw `WatchtowerError`

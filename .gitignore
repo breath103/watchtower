@@ -10,3 +10,4 @@ cameras.json
 *.db-wal
 *.db-shm
 .env*
+*.local.md

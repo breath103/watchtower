@@ -2,6 +2,7 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 
 import type { ConnectionStatus } from "../core/connector.js";
+import { tagSchema } from "../core/types.js";
 import type { Registry } from "../core/registry.js";
 import { type Database, DEFAULT_THUMBNAIL_FREQUENCY_S } from "../db/index.js";
 import { createApiKey } from "../services/api-keys.js";
@@ -13,9 +14,12 @@ import type { ThumbnailService } from "../services/thumbnails.js";
 import type { TimelineService } from "../services/timeline.js";
 import { statusSnapshot } from "../status.js";
 import {
+  camerasFilter,
   cameraOpener,
   checkClipRange,
   clipQuery,
+  filterCameras,
+  jsonQuery,
   jsonSchemaOf,
   mergeConfig,
   publicCamera,
@@ -134,16 +138,20 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
     route("/api/nvrs", "GET", {
       handler: () => {
         const configs = new Map(db.listThumbnailConfigs().map(cfg => [cfg.cameraId, cfg]));
+        const tagsOf = db.tagLookup();
         return {
           nvrs: db.listNvrs().map(nvr => {
             const def = registry.connector(nvr.connection.type);
             return {
               id: nvr.id,
               name: nvr.name,
+              tags: tagsOf(nvr.id),
               connector: nvr.connection.type,
               capabilities: def.capabilities,
               streams: def.streams,
-              cameras: db.listCameras(nvr.id).map(camera => publicCamera(camera, configs.get(camera.id))),
+              cameras: db
+                .listCameras(nvr.id)
+                .map(camera => publicCamera(camera, configs.get(camera.id), tagsOf(camera.id))),
             };
           }),
         };
@@ -205,12 +213,16 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
         const nvr = db.getNvr(params.id);
         if (!nvr) throw new HTTPException(404, { message: "nvr not found" });
         const { type, ...connection } = nvr.connection;
+        const tagsOf = db.tagLookup();
         return {
           id: nvr.id,
           name: nvr.name,
+          tags: tagsOf(nvr.id),
           connector: type,
           connection: redactSecrets(connection),
-          cameras: db.listCameras(nvr.id).map(camera => ({ id: camera.id, name: camera.name })),
+          cameras: db
+            .listCameras(nvr.id)
+            .map(camera => ({ id: camera.id, name: camera.name, tags: tagsOf(camera.id) })),
         };
       },
     }),
@@ -418,6 +430,20 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
       },
     }),
 
+    route("/api/tags", "GET", { handler: () => ({ tags: db.distinctTags() }) }),
+
+    route("/api/tags/:id", "PUT", {
+      body: { tags: z.array(tagSchema).max(50) },
+      handler: ({ params, body }) => {
+        if (!db.getNvr(params.id) && !db.getCamera(params.id)) {
+          throw new HTTPException(404, { message: "no nvr or camera with that id" });
+        }
+        db.setTags(params.id, body.tags);
+        log(`tags ${params.id}: ${body.tags.map(tag => `${tag.type}=${tag.value}`).join(", ") || "(none)"}`);
+        return { ok: true };
+      },
+    }),
+
     route("/api/keys", "GET", { handler: () => ({ keys: db.listApiKeys() }) }),
 
     route("/api/keys", "POST", {
@@ -438,15 +464,19 @@ export function apiRoutes({ auth, db, registry, pool, timeline, clips, thumbnail
     }),
 
     route("/api/v1/cameras", "GET", {
-      handler: () => {
+      query: { filter: jsonQuery(camerasFilter).optional() },
+      handler: ({ query }) => {
         const configs = new Map(db.listThumbnailConfigs().map(cfg => [cfg.cameraId, cfg]));
-        return {
-          nvrs: db.listNvrs().map(nvr => ({
-            id: nvr.id,
-            name: nvr.name,
-            cameras: db.listCameras(nvr.id).map(camera => publicCamera(camera, configs.get(camera.id))),
-          })),
-        };
+        const tagsOf = db.tagLookup();
+        const nvrs = db.listNvrs().map(nvr => ({
+          id: nvr.id,
+          name: nvr.name,
+          tags: tagsOf(nvr.id),
+          cameras: db
+            .listCameras(nvr.id)
+            .map(camera => publicCamera(camera, configs.get(camera.id), tagsOf(camera.id))),
+        }));
+        return { nvrs: filterCameras(nvrs, query.filter) };
       },
     })
   );

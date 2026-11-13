@@ -49,14 +49,17 @@ export function createWatchtowerClient({ baseUrl, apiKey, timeoutMs = 10_000, on
   ): Promise<Response<P, M>> {
     const { params, query, body, signal } = (options ?? {}) as {
       params?: Record<string, string>;
-      query?: Record<string, string | number | undefined>;
+      query?: Record<string, unknown>;
       body?: unknown;
       signal?: AbortSignal;
     };
     let url = baseUrl + path.replace(/:(\w+)/g, (_, key: string) => encodeURIComponent(params?.[key] ?? ""));
     if (query) {
       const search = new URLSearchParams();
-      for (const [key, value] of Object.entries(query)) if (value !== undefined) search.set(key, String(value));
+      for (const [key, value] of Object.entries(query)) {
+        if (value === undefined) continue;
+        search.set(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+      }
       url += `?${search}`;
     }
     const timeout = AbortSignal.timeout(timeoutMs);

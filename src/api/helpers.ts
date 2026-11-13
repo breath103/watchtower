@@ -2,7 +2,7 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 
 import type { ConnectorConnection, ConnectorDef } from "../core/connector.js";
-import type { CameraRecord } from "../core/types.js";
+import type { CameraRecord, Tag } from "../core/types.js";
 import type { Database, ThumbnailConfig } from "../db/index.js";
 import type { ClipJob } from "../services/clips.js";
 import type { ConnectionPool } from "../services/pool.js";
@@ -70,11 +70,46 @@ export const publicJob = (job: ClipJob) => ({
   videoUrl: job.status === "ready" ? `/api/clips/${job.id}/video.mp4` : null,
 });
 
-export const publicCamera = (camera: CameraRecord, cfg: ThumbnailConfig | undefined) => ({
+export const publicCamera = (camera: CameraRecord, cfg: ThumbnailConfig | undefined, tags: Tag[]) => ({
   id: camera.id,
   name: camera.name,
+  tags,
   thumbnail: cfg?.enabled ? { every: cfg.frequencyS } : null,
 });
+
+// Within a tag type any listed value matches; every listed type must match.
+const entityFilter = z.strictObject({ tags: z.record(z.string(), z.array(z.string()).min(1)).optional() });
+
+export const camerasFilter = z.strictObject({ nvrs: entityFilter.optional(), cameras: entityFilter.optional() });
+
+// The typed client JSON-encodes object query values (src/client.ts).
+export const jsonQuery = <T extends z.ZodType>(schema: T) =>
+  z
+    .string()
+    .transform((raw, ctx): unknown => {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        ctx.addIssue({ code: "custom", message: "must be JSON" });
+        return z.NEVER;
+      }
+    })
+    .pipe(schema);
+
+const matchesTags = (tags: Tag[], filter: Record<string, string[]> | undefined): boolean =>
+  !filter || Object.entries(filter).every(([type, values]) => tags.some(t => t.type === type && values.includes(t.value)));
+
+// With a camera filter, NVRs left with no matching cameras are dropped.
+export function filterCameras<C extends { tags: Tag[] }, N extends { tags: Tag[]; cameras: C[] }>(
+  nvrs: N[],
+  filter: z.infer<typeof camerasFilter> | undefined
+): N[] {
+  if (!filter) return nvrs;
+  return nvrs
+    .filter(nvr => matchesTags(nvr.tags, filter.nvrs?.tags))
+    .map(nvr => ({ ...nvr, cameras: nvr.cameras.filter(camera => matchesTags(camera.tags, filter.cameras?.tags)) }))
+    .filter(nvr => !filter.cameras?.tags || nvr.cameras.length > 0);
+}
 
 export function cameraOpener(db: Database, pool: ConnectionPool) {
   return (
