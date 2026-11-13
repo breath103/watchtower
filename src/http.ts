@@ -271,7 +271,7 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
   });
 
   app.use("/api/v1/*", requireApiKey(db));
-  mount(app, apiRoutes({ ...opts, logger: logger.with({ scope: "api" }) }));
+  mount(app, apiRoutes({ ...opts, logger: requestLogger }));
 
   app.onError((error, c) => {
     if (error instanceof HTTPException) {
@@ -281,9 +281,8 @@ export function createApp(opts: ApiDeps & { cache: ClipCache }): Hono {
     if (error instanceof ZodError) {
       return c.json({ error: { code: "bad_request", message: z.prettifyError(error) } }, 400);
     }
-    logger.log({
+    requestLogger.log({
       level: "error",
-      scope: "api",
       message: "request failed",
       method: c.req.method,
       path: c.req.path,
