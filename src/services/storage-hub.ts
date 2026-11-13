@@ -2,6 +2,7 @@
 // or any explicit id (per-camera thumbnail targets). Clients are memoized per
 // id and re-created when a storage record changes or the default switches.
 
+import type { Logger } from "../core/logger.js";
 import type { Registry } from "../core/registry.js";
 import type { Database } from "../db/index.js";
 import type { StorageClient } from "../storage/types.js";
@@ -15,7 +16,7 @@ interface ActiveStorage {
 export class StorageHub {
   private readonly clients = new Map<string, ActiveStorage>();
 
-  constructor(private readonly opts: { db: Database; registry: Registry; log: (line: string) => void }) {}
+  constructor(private readonly opts: { db: Database; registry: Registry; logger: Logger }) {}
 
   // id null/undefined = the configured default storage.
   get(id: string | null = null): ActiveStorage | null {
@@ -27,7 +28,7 @@ export class StorageHub {
     if (!record) return null;
     const def = this.opts.registry.storage(record.type);
     const config = def.configSchema.parse(record.config);
-    const client = def.create(config, { log: this.opts.log });
+    const client = def.create(config, { logger: this.opts.logger.with({ storage: target }) });
     const cfg = record.config as { root?: string; bucket?: string; prefix?: string };
     const label =
       record.type === "file"
@@ -48,11 +49,11 @@ export class StorageHub {
   setDefault(id: string): void {
     if (!this.opts.db.getStorage(id)) throw new Error(`unknown storage: ${id}`);
     this.opts.db.setSetting("defaultStorage", id);
-    this.opts.log(`default storage: ${id}`);
+    this.opts.logger.log({ level: "info", message: "default storage changed", storage: id });
   }
 
   refresh(): void {
     this.clients.clear();
-    this.opts.log(`storage: ${this.get()?.label ?? "none configured"}`);
+    this.opts.logger.log({ level: "info", message: "default storage", storage: this.get()?.label ?? null });
   }
 }

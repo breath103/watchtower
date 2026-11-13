@@ -12,6 +12,7 @@
 
 import type { z } from "zod";
 
+import type { Logger } from "./logger.js";
 import type { Observable } from "./observable.js";
 import type { Codec } from "./types.js";
 
@@ -79,7 +80,7 @@ export interface ConnectorConnection {
 }
 
 export interface ConnectorContext {
-  log: (line: string) => void;
+  logger: Logger;
   // Cameras registered for this NVR (empty during the connect wizard).
   cameras: Array<{ id: string; metadata: Record<string, unknown> }>;
 }

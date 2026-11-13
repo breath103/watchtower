@@ -7,6 +7,7 @@
 
 import { AdtcapsConnection } from "../src/connectors/vendors/adtcaps/connection.js";
 import { KEEPALIVE } from "../src/connectors/vendors/adtcaps/protocol.js";
+import type { Logger } from "../src/core/logger.js";
 import { FramePull } from "../src/core/observable.js";
 import { readSeedNvrs } from "./cameras.js";
 
@@ -40,12 +41,14 @@ if (!camA || !camB) {
   process.exit(1);
 }
 
-const logLines: string[] = [];
-const conn = new AdtcapsConnection({
-  endpoint: seed.connection,
-  cameras,
-  log: line => logLines.push(line),
-});
+let problems = 0;
+const logger: Logger = {
+  log: ({ level }) => {
+    if (level !== "info") problems++;
+  },
+  with: () => logger,
+};
+const conn = new AdtcapsConnection({ endpoint: seed.connection, cameras, logger });
 const pass = (label: string, ok: boolean, detail = ""): void => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  (${detail})` : ""}`);
 };
@@ -89,6 +92,6 @@ await new Promise(resolve => setTimeout(resolve, 2000));
 pass("all subscriptions released", conn.status().liveCameras.length === 0);
 pass("socket survived the whole probe", conn.status().connected);
 
-console.log(`log lines with failures: ${logLines.filter(line => line.includes("failed")).length}`);
+console.log(`warnings and errors logged: ${problems}`);
 conn.close();
 process.exit(0);

@@ -10,6 +10,7 @@ import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import { h264CodecString } from "../core/codec.js";
 import { type RawFrame, type VideoSubscription } from "../core/connector.js";
+import type { Logger } from "../core/logger.js";
 import { FramePull } from "../core/observable.js";
 import { type CacheFrame, type Codec } from "../core/types.js";
 import { TRANSCODED_CODEC_STRING, videoOutputArgs } from "../ffmpeg.js";
@@ -111,7 +112,7 @@ export async function grabKeyframe(
 // Live view: header + first keyframe, then every frame into fragmented MP4.
 export async function startLiveFmp4(
   sub: VideoSubscription,
-  opts: { transcode?: boolean; signal?: AbortSignal; log: (line: string) => void; label: string }
+  opts: { transcode?: boolean; signal?: AbortSignal; logger: Logger }
 ): Promise<PackagedStream> {
   await openWithin(sub);
   const pull = new FramePull(sub.frames);
@@ -162,7 +163,7 @@ export async function startLiveFmp4(
     child.stdin.on("error", () => undefined);
     child.stderr.resume();
     child.stdin.write(first);
-    opts.log(`${opts.label}: live ${sourceCodec}${transcode ? "->h264" : ""} started`);
+    opts.logger.log({ level: "info", message: "live stream started", codec: sourceCodec, transcode });
 
     void (async () => {
       try {
@@ -201,8 +202,7 @@ export async function startClipFmp4(
     transcode?: boolean;
     tee?: (frame: CacheFrame) => Promise<void>;
     signal?: AbortSignal;
-    log: (line: string) => void;
-    label: string;
+    logger: Logger;
   }
 ): Promise<ClipPumpInfo> {
   await openWithin(sub);
@@ -264,7 +264,7 @@ export async function startClipFmp4(
     child.stderr.resume();
     child.stdin.write(first);
     await opts.tee?.({ data: first, ptsMs: 0, key: true, codec: sourceCodec });
-    opts.log(`${opts.label}: clip stream started`);
+    opts.logger.log({ level: "info", message: "clip stream started", codec: sourceCodec });
 
     void (async () => {
       try {

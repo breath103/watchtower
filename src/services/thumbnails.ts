@@ -9,6 +9,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { ConnectorConnection } from "../core/connector.js";
+import type { Logger } from "../core/logger.js";
 import type { Codec } from "../core/types.js";
 import type { Database } from "../db/index.js";
 import { decodeKeyframe } from "../ffmpeg.js";
@@ -60,7 +61,7 @@ export class ThumbnailService {
       pool: ConnectionPool;
       hub: StorageHub;
       workDir: string;
-      log: (line: string) => void;
+      logger: Logger;
     }
   ) {}
 
@@ -112,16 +113,16 @@ export class ThumbnailService {
           removed += rows.length;
         }
       }
-      if (removed > 0) this.opts.log(`thumbnails: deleted ${removed} past their storage's retention`);
+      if (removed > 0) this.opts.logger.log({ level: "info", message: "deleted thumbnails past retention", removed });
     } catch (error) {
-      this.opts.log(`thumbnails: retention failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.opts.logger.log({ level: "error", message: "retention failed", error });
     } finally {
       this.applyingRetention = false;
     }
     return removed;
   }
 
-  async backfill(): Promise<number> {
+  async backfill(): Promise<void> {
     let added = 0;
     for (const record of this.opts.db.listStorages()) {
       const client = this.opts.hub.get(record.id)?.client;
@@ -135,7 +136,7 @@ export class ThumbnailService {
         }
       }
     }
-    return added;
+    if (added > 0) this.opts.logger.log({ level: "info", message: "indexed stored thumbnails", count: added });
   }
 
   state(cameraId: string): CameraThumbState | null {
@@ -173,7 +174,7 @@ export class ThumbnailService {
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
-      this.opts.log(`thumbnails failed: ${this.lastError}`);
+      this.opts.logger.log({ level: "error", message: "capture round failed", error });
     } finally {
       this.running = false;
     }
@@ -232,7 +233,7 @@ export class ThumbnailService {
     const ts = cfg.slot;
     const fail = (error: string): void => {
       this.thumbState.set(cfg.cameraId, { camera: cfg.cameraId, lastTs: ts, ok: false, error });
-      this.opts.log(`${cfg.cameraId}: thumbnail ${error}`);
+      this.opts.logger.log({ level: "warn", message: "thumbnail failed", camera: cfg.cameraId, error });
     };
     if (typeof image === "string") return fail(image);
 

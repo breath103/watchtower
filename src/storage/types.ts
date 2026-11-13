@@ -4,6 +4,8 @@
 
 import type { z } from "zod";
 
+import type { Logger } from "../core/logger.js";
+
 export interface StoragePutOptions {
   contentType?: string;
   cacheControl?: string;
@@ -19,7 +21,7 @@ export interface StorageClient {
 }
 
 interface StorageContext {
-  log: (line: string) => void;
+  logger: Logger;
 }
 
 export interface StorageDef<Config = unknown> {

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { api, SIGNED_OUT } from "./api.js";
 import { ConnectNvr } from "./connect.js";
 import { LoginPage } from "./login.js";
+import { LogsPage } from "./logs.js";
 import type { Route } from "./router.js";
 import { navigate, useRoute } from "./router.js";
 import { SettingsPage } from "./settings.js";
@@ -12,6 +13,7 @@ import { WatchPage } from "./watch.js";
 
 const NAV: Array<{ route: Route; label: string }> = [
   { route: "cameras", label: "Cameras" },
+  { route: "logs", label: "Logs" },
   { route: "settings", label: "Settings" },
 ];
 
@@ -72,6 +74,7 @@ export function App() {
         </div>
       </header>
       {page === "cameras" ? <WatchPage key={nvrsVersion} /> : null}
+      {page === "logs" ? <LogsPage /> : null}
       {page === "settings" ? <SettingsPage /> : null}
       <ConnectNvr
         open={connectOpen}

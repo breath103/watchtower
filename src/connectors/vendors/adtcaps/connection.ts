@@ -12,6 +12,7 @@ import {
   type StreamOptions,
   type VideoSubscription,
 } from "../../../core/connector.js";
+import type { Logger } from "../../../core/logger.js";
 import { Subject } from "../../../core/observable.js";
 import { hostTimeZone, isTimeZone, type WallClock, wallClockOf, wallClockToUtc } from "../../../core/time.js";
 import type { Codec } from "../../../core/types.js";
@@ -124,7 +125,7 @@ export class AdtcapsConnection implements ConnectorConnection {
     private readonly opts: {
       endpoint: AdtcapsConfig;
       cameras: ConnectorContext["cameras"];
-      log: (line: string) => void;
+      logger: Logger;
     }
   ) {
     this.timeZone = opts.endpoint.timezone ?? hostTimeZone();
@@ -266,7 +267,7 @@ export class AdtcapsConnection implements ConnectorConnection {
     if (created) {
       opened = this.enqueue(() => this.openChannel(num)).catch(error => {
         this.lastError = String(error);
-        this.opts.log(`ch${num} open failed: ${String(error)}`);
+        this.opts.logger.log({ level: "warn", message: "channel open failed", camera: cameraId, error });
         if (this.channels.get(num) === owned) {
           this.channels.delete(num);
           for (const sub of owned.subs) sub.close();
@@ -498,7 +499,7 @@ export class AdtcapsConnection implements ConnectorConnection {
   }
 
   private async connect(): Promise<void> {
-    const { endpoint, log } = this.opts;
+    const { endpoint, logger } = this.opts;
     const sock = await connectTcp(endpoint.host, endpoint.port, 8000);
     sock.setNoDelay(true);
     sock.on("error", error => {
@@ -515,7 +516,7 @@ export class AdtcapsConnection implements ConnectorConnection {
       for (const entry of this.channels.values()) for (const sub of entry.subs) sub.close();
       this.channels.clear();
       this.failAllPending();
-      log("control connection closed");
+      logger.log({ level: "warn", message: "control connection closed" });
     });
 
     this.socket = sock;
@@ -546,7 +547,7 @@ export class AdtcapsConnection implements ConnectorConnection {
     this.heartbeat = setInterval(() => {
       if (this.socket && !this.socket.destroyed) sendCommand(this.socket, KEEPALIVE);
     }, 10_000);
-    log("control connected");
+    logger.log({ level: "info", message: "control connected" });
   }
 
   private failAllPending(): void {

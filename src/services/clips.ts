@@ -8,6 +8,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 
 import { ClipCache, clipCacheKey } from "../clip-cache.js";
+import type { Logger } from "../core/logger.js";
 import type { Codec } from "../core/types.js";
 import type { Database } from "../db/index.js";
 import { remuxToMp4 } from "../ffmpeg.js";
@@ -47,7 +48,7 @@ export class ClipService {
       pool: ConnectionPool;
       workDir: string;
       cache: ClipCache;
-      log: (line: string) => void;
+      logger: Logger;
       maxConcurrent?: number;
     }
   ) {}
@@ -152,7 +153,7 @@ export class ClipService {
       job.status = "ready";
       job.progress = 1;
       this.jobsByKey.delete(key);
-      this.opts.log(`${job.camera}: clip ${job.id} served from cache`);
+      this.opts.logger.log({ level: "info", message: "clip served from cache", camera: job.camera, clip: job.id });
       return;
     }
 
@@ -175,19 +176,29 @@ export class ClipService {
       const sourceCodec: Codec = result.codec;
       await remuxToMp4(tsPath, mp4Path, sourceCodec, job.transcode === true);
       await this.opts.cache.putFile(key, mp4Path, job.transcode ? "h264" : sourceCodec).catch(error => {
-        this.opts.log(
-          `${job.camera}: clip ${job.id} cache store failed: ${error instanceof Error ? error.message : String(error)}`
-        );
+        this.opts.logger.log({
+          level: "warn",
+          message: "clip cache store failed",
+          camera: job.camera,
+          clip: job.id,
+          error,
+        });
       });
       job.file = mp4Path;
       job.status = "ready";
       job.progress = 1;
-      this.opts.log(`${job.camera}: clip ${job.id} ready (${result.frames} frames)`);
+      this.opts.logger.log({
+        level: "info",
+        message: "clip ready",
+        camera: job.camera,
+        clip: job.id,
+        frames: result.frames,
+      });
     } catch (error) {
       out.end();
       job.status = "failed";
       job.error = error instanceof Error ? error.message : String(error);
-      this.opts.log(`${job.camera}: clip ${job.id} failed: ${job.error}`);
+      this.opts.logger.log({ level: "error", message: "clip failed", camera: job.camera, clip: job.id, error });
     } finally {
       this.jobsByKey.delete(key);
     }

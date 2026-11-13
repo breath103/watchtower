@@ -10,6 +10,7 @@ import { EditNvrDialog } from "./nvr-edit.js";
 import { setSearchParam } from "./router.js";
 import { TagPill, tagKey } from "./tags.js";
 import { HOUR, SPANS, stamp, timeTicks } from "./time.js";
+import { useDebounced } from "./use-debounced.js";
 
 type NvrListEntry = ApiResponse<"/api/nvrs", "GET">["nvrs"][number];
 type Camera = NvrListEntry["cameras"][number];
@@ -20,15 +21,6 @@ const LIVE_DELAY_MS = 10_000;
 const SCRUB_DEBOUNCE_MS = 300;
 
 const slotOf = (ms: number, every: number): number => Math.floor(ms / 1000 / every) * every;
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(id);
-  }, [value, ms]);
-  return debounced;
-}
 
 export function CameraGrid() {
   const [nvrs, setNvrs] = useState<NvrListEntry[] | null>(null);
