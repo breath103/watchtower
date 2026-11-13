@@ -4,7 +4,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 
-import type { ApiKeyRecord, CameraRecord, NvrRecord, StorageRecord } from "../core/types.js";
+import type { ApiKeyRecord, CameraRecord, NvrRecord, StorageRecord, Tag } from "../core/types.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS nvrs (
@@ -39,6 +39,13 @@ CREATE INDEX IF NOT EXISTS thumbnails_ts ON thumbnails(ts);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+-- id is an nvr id or a camera id (no FK: it can point at either table).
+CREATE TABLE IF NOT EXISTS tags (
+  id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (id, type, value)
 );
 CREATE TABLE IF NOT EXISTS api_keys (
   id TEXT PRIMARY KEY,
@@ -181,7 +188,10 @@ export class Database {
   }
 
   deleteNvr(id: string): void {
-    this.db.prepare("DELETE FROM nvrs WHERE id = ?").run(id);
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM tags WHERE id = ? OR id IN (SELECT id FROM cameras WHERE nvr_id = ?)").run(id, id);
+      this.db.prepare("DELETE FROM nvrs WHERE id = ?").run(id);
+    });
   }
 
   // Inserts the NVR and its cameras atomically; fails if any id is taken.
@@ -319,6 +329,34 @@ export class Database {
 
   deleteThumbnail(cameraId: string, ts: number): void {
     this.db.prepare("DELETE FROM thumbnails WHERE camera_id = ? AND ts = ?").run(cameraId, ts);
+  }
+
+  // ---- tags ---------------------------------------------------------------
+  tagLookup(): (id: string) => Tag[] {
+    const rows = this.db.prepare("SELECT id, type, value FROM tags ORDER BY id, type, value").all() as Array<{
+      id: string;
+      type: string;
+      value: string;
+    }>;
+    const byId = new Map<string, Tag[]>();
+    for (const row of rows) {
+      const list = byId.get(row.id) ?? [];
+      list.push({ type: row.type, value: row.value });
+      byId.set(row.id, list);
+    }
+    return id => byId.get(id) ?? [];
+  }
+
+  distinctTags(): Tag[] {
+    return this.db.prepare("SELECT DISTINCT type, value FROM tags ORDER BY type, value").all() as unknown as Tag[];
+  }
+
+  setTags(id: string, tags: Tag[]): void {
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM tags WHERE id = ?").run(id);
+      const insert = this.db.prepare("INSERT OR IGNORE INTO tags (id, type, value) VALUES (?, ?, ?)");
+      for (const tag of tags) insert.run(id, tag.type, tag.value);
+    });
   }
 
   // ---- api keys -----------------------------------------------------------

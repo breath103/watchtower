@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { type ApiResponse, api } from "./api.js";
 import { EditNvrDialog } from "./nvr-edit.js";
 import { setSearchParam } from "./router.js";
+import { TagPill, tagKey } from "./tags.js";
 import { HOUR, SPANS, stamp, timeTicks } from "./time.js";
 
 type NvrListEntry = ApiResponse<"/api/nvrs", "GET">["nvrs"][number];
@@ -62,6 +63,9 @@ export function CameraGrid() {
                 <div className="flex h-7 items-center gap-2">
                   <h2 className="truncate text-sm font-medium">{nvr.name}</h2>
                   <span className="text-sm text-muted-foreground">{nvr.id}</span>
+                  {nvr.tags.map(tag => (
+                    <TagPill key={tagKey(tag)} tag={tag} />
+                  ))}
                   <Button
                     size="icon-sm"
                     variant="ghost"
@@ -131,6 +135,17 @@ const CameraCard = memo(function CameraCard({ camera, slot }: { camera: Camera; 
       <span className="absolute top-2 left-2 max-w-[calc(100%-1rem)] truncate rounded-md bg-black/55 px-2 py-0.5 text-sm text-white backdrop-blur-md">
         {camera.name}
       </span>
+      {camera.tags.length > 0 ? (
+        <span className="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] flex-wrap gap-1">
+          {camera.tags.map(tag => (
+            <TagPill
+              key={tagKey(tag)}
+              tag={tag}
+              className="border-transparent bg-black/55 text-white backdrop-blur-md"
+            />
+          ))}
+        </span>
+      ) : null}
       <span className="pointer-events-none absolute inset-0 ring-2 ring-transparent ring-inset transition group-hover:ring-foreground/40" />
     </button>
   );

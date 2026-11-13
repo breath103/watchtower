@@ -2,6 +2,8 @@
 // id + name + a connector-typed connection blob; a camera belongs to an NVR and
 // carries connector metadata.
 
+import { z } from "zod";
+
 export type Codec = "h264" | "hevc";
 
 // connection: { type: "<connector id>", ...connector-specific config }
@@ -28,6 +30,12 @@ export interface CameraRecord {
   name: string;
   metadata: CameraMetadata;
 }
+
+export const tagSchema = z.object({
+  type: z.string().trim().min(1).max(100),
+  value: z.string().trim().min(1).max(200),
+});
+export type Tag = z.infer<typeof tagSchema>;
 
 export interface ApiKeyRecord {
   id: string;

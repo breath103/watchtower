@@ -19,6 +19,8 @@ import { type ApiResponse, api } from "./api.js";
 import { ConfirmDialog } from "./confirm.js";
 import type { ConnectorInfo } from "./connect.js";
 import { type FormValues, formPayload, formValues, SchemaFields } from "./schema-form.js";
+import type { Tag } from "../core/types.js";
+import { sameTags, TagEditor } from "./tags.js";
 import { ago } from "./time.js";
 
 type NvrDetail = ApiResponse<"/api/nvrs/:id", "GET">;
@@ -57,6 +59,8 @@ export function EditNvrDialog({
   const [original, setOriginal] = useState<CameraRow[]>([]);
   const [storages, setStorages] = useState<StorageRow[]>([]);
   const [defaultStorage, setDefaultStorage] = useState<string | null>(null);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [suggestions, setSuggestions] = useState<Tag[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -68,8 +72,9 @@ export function EditNvrDialog({
       api("/api/connectors", "GET"),
       api("/api/storages", "GET"),
       api("/api/thumbnails/config", "GET"),
+      api("/api/tags", "GET"),
     ])
-      .then(([detail, catalog, storageCatalog, thumbnails]) => {
+      .then(([detail, catalog, storageCatalog, thumbnails, allTags]) => {
         const def = catalog.connectors.find(entry => entry.id === detail.connector) ?? null;
         const configs = new Map(thumbnails.cameras.map(cfg => [cfg.cameraId, cfg]));
         const rows = detail.cameras.map(camera => {
@@ -83,6 +88,8 @@ export function EditNvrDialog({
         setNvr(detail);
         setConnector(def);
         setName(detail.name);
+        setTags(detail.tags);
+        setSuggestions(allTags.tags);
         setValues(def ? formValues(def.configSchema, detail.connection) : {});
         setCameras(rows);
         setOriginal(rows);
@@ -104,6 +111,15 @@ export function EditNvrDialog({
           cameras: cameras.map(({ id, name: cameraName }) => ({ id, name: cameraName })),
         },
       });
+      const retagged = [
+        ...(sameTags(tags, nvr.tags) ? [] : [{ id: nvr.id, tags }]),
+        ...cameras
+          .filter((camera, index) => !sameTags(camera.tags, original[index]?.tags ?? []))
+          .map(camera => ({ id: camera.id, tags: camera.tags })),
+      ];
+      await Promise.all(
+        retagged.map(entry => api("/api/tags/:id", "PUT", { params: { id: entry.id }, body: { tags: entry.tags } }))
+      );
       const changed = cameras.filter(
         (camera, index) => JSON.stringify(camera.capture) !== JSON.stringify(original[index]?.capture)
       );
@@ -135,6 +151,10 @@ export function EditNvrDialog({
               <Label htmlFor="edit-nvr-name">Name</Label>
               <Input id="edit-nvr-name" value={name} onChange={e => setName(e.target.value)} />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Tags</Label>
+              <TagEditor tags={tags} onChange={setTags} suggestions={suggestions} label={name || "this NVR"} />
+            </div>
             {connector ? (
               <SchemaFields
                 schema={connector.configSchema}
@@ -150,6 +170,7 @@ export function EditNvrDialog({
                 cameras={cameras}
                 storages={storages}
                 defaultStorage={defaultStorage}
+                suggestions={suggestions}
                 onChange={(id, patch) =>
                   setCameras(prev => prev.map(camera => (camera.id === id ? { ...camera, ...patch } : camera)))
                 }
@@ -196,11 +217,13 @@ function CameraTable({
   cameras,
   storages,
   defaultStorage,
+  suggestions,
   onChange,
 }: {
   cameras: CameraRow[];
   storages: StorageRow[];
   defaultStorage: string | null;
+  suggestions: Tag[];
   onChange: (id: string, patch: Partial<CameraRow>) => void;
 }) {
   const on = cameras.filter(camera => camera.capture.enabled).length;
@@ -220,6 +243,7 @@ function CameraTable({
             />
           </TableHead>
           <TableHead>Name</TableHead>
+          <TableHead>Tags</TableHead>
           <TableHead className="w-48">Storage</TableHead>
           <TableHead className="w-36">Interval</TableHead>
           <TableHead className="w-28">Last capture</TableHead>
@@ -241,6 +265,14 @@ function CameraTable({
                 className="h-8"
                 value={camera.name}
                 onChange={e => onChange(camera.id, { name: e.target.value })}
+              />
+            </TableCell>
+            <TableCell className="whitespace-normal">
+              <TagEditor
+                tags={camera.tags}
+                onChange={next => onChange(camera.id, { tags: next })}
+                suggestions={suggestions}
+                label={camera.name}
               />
             </TableCell>
             {camera.capture.enabled ? (
