@@ -15,16 +15,6 @@ export type ApiResponse<P extends Path, M extends MethodOf<P>> =
 
 export const SIGNED_OUT = "watchtower:signed-out";
 
-export class WatchtowerError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string
-  ) {
-    super(message);
-  }
-}
-
 export async function api<P extends Path, M extends MethodOf<P>>(
   path: P,
   method: M,
@@ -56,12 +46,8 @@ export async function api<P extends Path, M extends MethodOf<P>>(
   });
   if (!response.ok) {
     if (response.status === 401) window.dispatchEvent(new Event(SIGNED_OUT));
-    const payload = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
-    throw new WatchtowerError(
-      response.status,
-      payload?.error?.code ?? `http_${response.status}`,
-      payload?.error?.message ?? `${method} ${path} → HTTP ${response.status}`
-    );
+    const payload = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(payload?.error?.message ?? `${method} ${path} → HTTP ${response.status}`);
   }
   return (await response.json()) as ApiResponse<P, M>;
 }
