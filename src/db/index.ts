@@ -304,6 +304,15 @@ export class Database {
       .run(cameraId, ts, storageId);
   }
 
+  recordThumbnails(cameraId: string, slots: number[], storageId: string): number {
+    const insert = this.db.prepare("INSERT OR IGNORE INTO thumbnails (camera_id, ts, storage_id) VALUES (?, ?, ?)");
+    let added = 0;
+    this.transaction(() => {
+      for (const ts of slots) added += Number(insert.run(cameraId, ts, storageId).changes);
+    });
+    return added;
+  }
+
   listThumbnails(cameraId: string, fromTs: number, toTs: number): number[] {
     return (
       this.db

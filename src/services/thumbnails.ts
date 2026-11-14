@@ -123,20 +123,33 @@ export class ThumbnailService {
   }
 
   async backfill(): Promise<void> {
-    let added = 0;
     for (const record of this.opts.db.listStorages()) {
-      const client = this.opts.hub.get(record.id)?.client;
-      if (!client?.list) continue;
-      for (const camera of this.opts.db.listCameras()) {
-        for (const key of await client.list(`${camera.id}/thumbnails`)) {
-          const ts = Number(/(\d+)\.jpeg$/.exec(key)?.[1]);
-          if (!Number.isFinite(ts)) continue;
-          this.opts.db.recordThumbnail(camera.id, ts, record.id);
-          added++;
+      const list = this.opts.hub.get(record.id)?.client.list;
+      if (!list) continue;
+      const started = Date.now();
+      try {
+        const counts = await Promise.all(
+          this.opts.db.listCameras().map(async camera => {
+            const slots = (await list(`${camera.id}/thumbnails`))
+              .map(key => Number(/(\d+)\.jpeg$/.exec(key)?.[1]))
+              .filter(Number.isFinite);
+            return this.opts.db.recordThumbnails(camera.id, slots, record.id);
+          })
+        );
+        const count = counts.reduce((sum, added) => sum + added, 0);
+        if (count > 0) {
+          this.opts.logger.log({
+            level: "info",
+            message: "indexed stored thumbnails",
+            storage: record.id,
+            count,
+            ms: Date.now() - started,
+          });
         }
+      } catch (error) {
+        this.opts.logger.log({ level: "warn", message: "thumbnail indexing failed", storage: record.id, error });
       }
     }
-    if (added > 0) this.opts.logger.log({ level: "info", message: "indexed stored thumbnails", count: added });
   }
 
   state(cameraId: string): CameraThumbState | null {

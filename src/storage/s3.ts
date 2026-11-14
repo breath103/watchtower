@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { z } from "zod";
 
 import { defineStorage, type StoragePutOptions } from "./types.js";
@@ -47,6 +47,20 @@ export const S3Storage = defineStorage({
             CacheControl: opts?.cacheControl ?? "public, max-age=60",
           })
         );
+      },
+      list: async dir => {
+        const keys: string[] = [];
+        let token: string | undefined;
+        do {
+          const page = await client.send(
+            new ListObjectsV2Command({ Bucket: config.bucket, Prefix: `${fullKey(dir)}/`, ContinuationToken: token })
+          );
+          for (const item of page.Contents ?? []) {
+            if (item.Key) keys.push(prefix ? item.Key.slice(prefix.length + 1) : item.Key);
+          }
+          token = page.NextContinuationToken;
+        } while (token);
+        return keys;
       },
     };
   },

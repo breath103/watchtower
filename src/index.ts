@@ -62,7 +62,7 @@ async function main(): Promise<void> {
     workDir: config.workDir,
     logger: logger.with({ scope: "thumbnails" }),
   });
-  await thumbnails.backfill();
+  void thumbnails.backfill();
   const thumbnailsEnabled = db.getSetting("thumbnails.enabled") === "1";
   if (thumbnailsEnabled) thumbnails.start();
   thumbnails.startRetention();
