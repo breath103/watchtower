@@ -1,71 +1,95 @@
 # Watchtower
 
-A small self-hosted server that owns your CCTV NVRs: it keeps the connections, captures thumbnails, shows recording
-timelines, plays and saves recorded clips, and streams live video to the browser. Other systems read the camera list
-over an API-key-protected HTTP API, using a fully typed TypeScript client.
+## What it is
 
-- **Camera grid** with a time slider: scrub back through thumbnails for every camera at once.
-- **Single-camera view**: live video, recordings timeline, progressive clip playback, save clip as MP4.
-- **Thumbnails** on epoch-aligned slots (`<camera>/thumbnails/<slot>.jpeg`, slot = `floor(t / every) * every`),
-  written to local disk or S3, configurable per camera (on/off, storage, interval).
-- **NVR management** from the UI: connect wizard (test connection, discover cameras), edit, delete.
-- **One admin login** for the web UI; **API keys** for other systems.
+Watchtower is a self-hosted server that connects to all of your CCTV NVRs and gives you one place to manage and
+monitor them. It holds a persistent connection to each NVR, and on top of that provides a web UI for live video,
+recordings and thumbnails across every camera, plus an HTTP API for other systems to consume.
 
-Supported NVRs: the ADT CAPS protocol used by STL NVA-series recorders. Connectors are pluggable
-(`src/connectors/`), as are storage backends (`src/storage/`: local file, S3).
+## Why I made it
 
-## Requirements
+The vendor clients for ADT CAPS NVRs are built on ActiveX, so they only run in a legacy browser on Windows. Each NVR
+is a separate login in a separate window, there is no way to see cameras from several NVRs together, and there is no
+API to integrate with. Once you have more than a couple of sites, that stops being workable.
 
-- Node.js 24+ (uses the built-in `node:sqlite`)
-- `ffmpeg` on `PATH`
+Watchtower replaces that with a single server: add each NVR once, then use any modern browser to watch every camera,
+and an API key to give other applications access.
 
-## Quick start
+## Features
+
+- **Camera grid** across all NVRs, with a time slider for scrubbing back through every camera's thumbnails at once.
+- **Live video** in the browser. H.265 is passed through when the browser supports it and transcoded to H.264
+  otherwise.
+- **Recordings**: per-day recording timeline, playback, and MP4 clip export.
+- **Scheduled thumbnails** to local disk or S3, configured per camera (enabled, interval, storage).
+- **NVR management** in the UI: test the connection, discover cameras, edit and remove NVRs.
+- **Tags** on NVRs and cameras (for example `location: HQ`), filterable through the API.
+- **Logs**: captures, API requests and NVR connection events are logged as structured entries, kept for 7 days, and
+  searchable in the UI.
+- **Typed HTTP API** with API-key authentication. TypeScript consumers get compile-time types for every route.
+- **One connection per NVR**, shared by live view, timelines and thumbnails, so concurrent viewers don't open extra
+  sessions on the device.
+
+Connectors (`src/connectors/`) and storage backends (`src/storage/`) are pluggable. ADT CAPS is the only connector
+today.
+
+## Get started
+
+You need Node.js 24+ and `ffmpeg` on your `PATH`.
 
 ```bash
 npm install
-cp config.example.json config.json   # then set admin.username / admin.password
-npm start                            # builds the UI, serves http://127.0.0.1:10530
+cp config.example.json config.json   # set admin.username and admin.password
+npm start                            # http://127.0.0.1:10530
 ```
 
-Sign in with the admin account, then **Add NVR**. Thumbnail capture is **off** until you turn it on in Settings.
+Sign in and use **Add NVR**. Thumbnail capture is off until you enable it in Settings.
+
+Watchtower does not terminate TLS. Put it behind a reverse proxy before exposing it.
 
 ## Configuration
 
-`config.json` (gitignored), validated against `config.schema.json` (`npm run config:schema` regenerates it). Pass
-`--config <path>` to use another file. Paths resolve relative to the config file.
+`config.json` holds only what is needed to start the server. Everything else (NVRs, storages, capture settings, API
+keys) is stored in the database and edited in the UI.
 
 | key | default | |
 |---|---|---|
-| `workDir` | `data` | sqlite database, local thumbnails, clip cache |
+| `workDir` | `data` | database, local thumbnails, clip cache, logs |
 | `host` | `127.0.0.1` | interface to bind |
 | `port` | `10530` | HTTP port |
-| `admin.username` / `admin.password` | required | the one account that can sign in to the UI (password ≥ 8 chars) |
+| `admin.username` / `admin.password` | required | the one UI login (password ≥ 8 characters) |
 
-Everything else (NVRs, storages, per-camera capture, API keys) lives in the sqlite database and is edited in the UI.
+Use `--config <path>` to load a different file.
 
-## Authentication
+## Using the API
 
-- **UI and internal API** (`/api/*`): sign in with the admin account. Signing in sets a signed, HttpOnly session
-  cookie for 30 days. Changing the admin credentials signs every session out.
-- **External API** (`/api/v1/*`): `Authorization: Bearer <key>`. Create keys in Settings → API keys; a key is shown
-  once and only its hash is stored.
+- The web UI signs in with the admin account.
+- Other apps call `/api/v1/*` with `Authorization: Bearer <key>`. Create keys in Settings → API keys. Each key is
+  shown once.
 
-Watchtower has no TLS of its own. Put it behind a reverse proxy that terminates HTTPS before exposing it.
-
-## Typed API
-
-Routes are declared once (`src/api/routes.ts`: zod schemas for input, the handler's return type for output). The
-compiler generates declarations from them (`npm run build:types` → `dist/types/`, gitignored), and the package
-exports only those types:
+TypeScript projects can install Watchtower as a dependency and get the route types (types only, no runtime code):
 
 ```jsonc
-// your package.json — npm runs watchtower's `prepare` (build:types) on install
 "dependencies": { "watchtower": "github:<owner>/watchtower" }
 ```
 
 ```ts
 import type { WatchtowerApi } from "watchtower/api";
 
+const { nvrs } = await watchtower("/api/v1/cameras", "GET");
+// nvrs: { id, name, tags, cameras: { id, name, tags, thumbnail: { every } | null }[] }[]
+
+await watchtower("/api/v1/cameras", "GET", {
+  query: { filter: { nvrs: { tags: { location: ["HQ", "Lab"] } } } },
+});
+```
+
+A wrong path, a missing param or a wrong field type is a compile error. Keep `skipLibCheck` on.
+
+<details>
+<summary>The <code>watchtower()</code> helper used above</summary>
+
+```ts
 type Endpoint<P extends keyof WatchtowerApi, M extends keyof WatchtowerApi[P]> = WatchtowerApi[P][M];
 type Input<E> = (E extends { params: infer T } ? ([T] extends [never] ? unknown : { params: T }) : unknown) &
   (E extends { query: infer T } ? ([T] extends [never] ? unknown : { query: T }) : unknown) &
@@ -91,32 +115,12 @@ async function watchtower<P extends keyof WatchtowerApi & string, M extends keyo
   if (!response.ok) throw new Error(`${method} ${path} → HTTP ${response.status}`);
   return response.json();
 }
-
-const { nvrs } = await watchtower("/api/v1/cameras", "GET");
-// nvrs: { id, name, tags, cameras: { id, name, tags, thumbnail: { every } | null }[] }[]
-// tags: { type, value }[]
-
-// Filter by tag: within a type any listed value matches; every listed type must match.
-await watchtower("/api/v1/cameras", "GET", {
-  query: { filter: { nvrs: { tags: { location: ["HQ", "Lab"] } } } },
-});
-// Over plain HTTP the filter is URL-encoded JSON:
-//   GET /api/v1/cameras?filter={"nvrs":{"tags":{"location":["HQ","Lab"]}}}
-// A `cameras` filter keeps only matching cameras and drops NVRs left with none.
 ```
 
-A wrong path, a missing param, or a wrong field type is a compile error. The consumer type-checks against the
-generated declarations only, never watchtower's source; keep `skipLibCheck` on. Object query values are sent as JSON.
+Over plain HTTP, the filter is URL-encoded JSON: `GET /api/v1/cameras?filter={"nvrs":{"tags":{"location":["HQ"]}}}`.
+Within a tag type any listed value matches; every listed type must match.
 
-## How it talks to NVRs
-
-- **One persistent connection per NVR** carries login, heartbeat, timeline queries, live view, and thumbnail grabs.
-  Live channels are refcounted subscriptions on it: two viewers of a channel share one subscription, and the
-  channel is stopped only when the last one leaves.
-- **Clip playback** uses a short-lived second connection per fetch, so a clip burst never competes with live video.
-- **Timeline** is the NVR's per-minute recording map, cached per NVR and date (past dates are immutable).
-- **Live and clips** are streamed to the browser as fragmented MP4 over HTTP and played with MSE. H.265 is served
-  as-is when the browser can decode it, otherwise transcoded to H.264. Completed clips are cached locally for an hour.
+</details>
 
 ## Development
 
@@ -126,4 +130,4 @@ npm test
 npm run build:ui
 ```
 
-`scripts/probe-*.ts` are protocol probes against a real NVR (`--cameras <file>`); read them before running one.
+`scripts/probe-*.ts` connect to real NVRs. Read a script before running it.
