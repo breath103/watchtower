@@ -31,16 +31,17 @@ CREATE TABLE IF NOT EXISTS thumbnail_runs (
 
 ## Writes
 
-`recordThumbnail({ cameraId, ts, every, storageId })` finds the run with the greatest `start <= ts`:
+`recordThumbnails({ cameraId, slots, every, storageId })` takes the slots in order and, for each, finds the run with
+the greatest `start <= ts`:
 
-- it already holds `ts` → nothing;
+- `ts` is inside it (held, or off its spacing) → skipped, so runs never overlap;
 - it ends at `ts - every` with the same `every` and storage → extend its `end`; if the next run starts at
   `ts + every` with the same shape, merge the two;
 - otherwise, if the next run starts at `ts + every` → move that run's `start` back;
 - otherwise insert a one-slot run.
 
-Live capture always takes the "extend" path. The S3 backfill feeds sorted slots through the same method in one
-transaction.
+Live capture passes one slot and always takes the "extend" path. The S3 backfill passes a camera's listed slots in one
+call, which is one transaction.
 
 ## Reads
 

@@ -106,6 +106,10 @@ interface ApiKeyRow {
   last_used_at: number | null;
 }
 
+// The run that holds ts, if any: the one with the greatest start <= ts.
+const RUN_AT =
+  "SELECT start, end, every, storage_id FROM thumbnail_runs WHERE camera_id = ? AND start <= ? ORDER BY start DESC LIMIT 1";
+
 const firstSlotFrom = (run: { start: number; every: number }, ts: number): number =>
   run.start + Math.max(0, Math.ceil((ts - run.start) / run.every)) * run.every;
 
@@ -347,9 +351,7 @@ export class Database {
   // off that run's spacing) is skipped, so runs never overlap.
   recordThumbnails(opts: { cameraId: string; slots: number[]; every: number; storageId: string }): number {
     const { cameraId, every, storageId } = opts;
-    const before = this.db.prepare(
-      "SELECT start, end, every, storage_id FROM thumbnail_runs WHERE camera_id = ? AND start <= ? ORDER BY start DESC LIMIT 1"
-    );
+    const before = this.db.prepare(RUN_AT);
     const after = this.db.prepare(
       "SELECT start, end, every, storage_id FROM thumbnail_runs WHERE camera_id = ? AND start > ? ORDER BY start LIMIT 1"
     );
@@ -399,11 +401,7 @@ export class Database {
   }
 
   getThumbnailStorage(cameraId: string, ts: number): string | null {
-    const run = this.db
-      .prepare(
-        "SELECT start, end, every, storage_id FROM thumbnail_runs WHERE camera_id = ? AND start <= ? ORDER BY start DESC LIMIT 1"
-      )
-      .get(cameraId, ts) as RunRow | undefined;
+    const run = this.db.prepare(RUN_AT).get(cameraId, ts) as RunRow | undefined;
     return run && ts <= run.end && (ts - run.start) % run.every === 0 ? run.storage_id : null;
   }
 
