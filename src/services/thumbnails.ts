@@ -20,7 +20,6 @@ import type { StorageHub } from "./storage-hub.js";
 const MASTER_TICK_MS = 1_000;
 const GRAB_TIMEOUT_MS = 5_000;
 const RETENTION_INTERVAL_MS = 60 * 60 * 1000;
-const RETENTION_BATCH = 500;
 
 export const thumbnailSlot = (nowMs: number, frequencyS: number): number =>
   Math.floor(nowMs / 1000 / frequencyS) * frequencyS;
@@ -43,6 +42,7 @@ interface DueConfig {
   cameraId: string;
   storageId: string | null;
   slot: number;
+  every: number;
 }
 
 export class ThumbnailService {
@@ -103,14 +103,12 @@ export class ThumbnailService {
         const client = this.opts.hub.get(record.id)?.client;
         if (!client?.retentionDays || !client.delete) continue;
         const cutoff = Math.floor(Date.now() / 1000) - client.retentionDays * 86_400;
-        for (;;) {
-          const rows = this.opts.db.oldestThumbnails(record.id, cutoff, RETENTION_BATCH);
-          if (rows.length === 0) break;
-          for (const row of rows) {
-            await client.delete(`${row.cameraId}/thumbnails/${row.ts}.jpeg`);
-            this.opts.db.deleteThumbnail(row.cameraId, row.ts);
+        for (const run of this.opts.db.thumbnailRunsBefore(record.id, cutoff)) {
+          for (let ts = run.start; ts < cutoff && ts <= run.end; ts += run.every) {
+            await client.delete(`${run.cameraId}/thumbnails/${ts}.jpeg`);
+            removed++;
           }
-          removed += rows.length;
+          this.opts.db.trimThumbnailRun(run, cutoff);
         }
       }
       if (removed > 0) this.opts.logger.log({ level: "info", message: "deleted thumbnails past retention", removed });
@@ -123,20 +121,38 @@ export class ThumbnailService {
   }
 
   async backfill(): Promise<void> {
-    let added = 0;
     for (const record of this.opts.db.listStorages()) {
-      const client = this.opts.hub.get(record.id)?.client;
-      if (!client?.list) continue;
-      for (const camera of this.opts.db.listCameras()) {
-        for (const key of await client.list(`${camera.id}/thumbnails`)) {
-          const ts = Number(/(\d+)\.jpeg$/.exec(key)?.[1]);
-          if (!Number.isFinite(ts)) continue;
-          this.opts.db.recordThumbnail(camera.id, ts, record.id);
-          added++;
+      const list = this.opts.hub.get(record.id)?.client.list;
+      if (!list) continue;
+      const started = Date.now();
+      try {
+        const counts = await Promise.all(
+          this.opts.db.listThumbnailConfigs().map(async cfg => {
+            const slots = (await list(`${cfg.cameraId}/thumbnails`))
+              .map(key => Number(/(\d+)\.jpeg$/.exec(key)?.[1]))
+              .filter(Number.isFinite);
+            return this.opts.db.recordThumbnails({
+              cameraId: cfg.cameraId,
+              slots,
+              every: cfg.frequencyS,
+              storageId: record.id,
+            });
+          })
+        );
+        const count = counts.reduce((sum, added) => sum + added, 0);
+        if (count > 0) {
+          this.opts.logger.log({
+            level: "info",
+            message: "indexed stored thumbnails",
+            storage: record.id,
+            count,
+            ms: Date.now() - started,
+          });
         }
+      } catch (error) {
+        this.opts.logger.log({ level: "warn", message: "thumbnail indexing failed", storage: record.id, error });
       }
     }
-    if (added > 0) this.opts.logger.log({ level: "info", message: "indexed stored thumbnails", count: added });
   }
 
   state(cameraId: string): CameraThumbState | null {
@@ -165,7 +181,7 @@ export class ThumbnailService {
         const camera = this.opts.db.getCamera(cfg.cameraId);
         if (!camera) continue;
         const list = dueByNvr.get(camera.nvrId) ?? [];
-        list.push({ cameraId: cfg.cameraId, storageId: cfg.storageId, slot });
+        list.push({ cameraId: cfg.cameraId, storageId: cfg.storageId, slot, every: cfg.frequencyS });
         dueByNvr.set(camera.nvrId, list);
       }
       if (dueByNvr.size === 0) return;
@@ -251,7 +267,7 @@ export class ThumbnailService {
     } catch (error) {
       return fail(`upload failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    this.opts.db.recordThumbnail(cfg.cameraId, ts, storage.id);
+    this.opts.db.recordThumbnails({ cameraId: cfg.cameraId, slots: [ts], every: cfg.every, storageId: storage.id });
     this.thumbState.set(cfg.cameraId, { camera: cfg.cameraId, lastTs: ts, ok: true, error: null });
     this.opts.logger.log({
       level: "info",
