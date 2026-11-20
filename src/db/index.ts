@@ -29,13 +29,15 @@ CREATE TABLE IF NOT EXISTS camera_thumbnails (
   storage_id TEXT,
   frequency_s INTEGER NOT NULL DEFAULT 30
 );
-CREATE TABLE IF NOT EXISTS thumbnails (
+-- Captured slots start, start + every, ..., end. Runs of one camera never overlap.
+CREATE TABLE IF NOT EXISTS thumbnail_runs (
   camera_id TEXT NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
-  ts INTEGER NOT NULL,
+  start INTEGER NOT NULL,
+  end INTEGER NOT NULL,
+  every INTEGER NOT NULL,
   storage_id TEXT NOT NULL,
-  PRIMARY KEY (camera_id, ts)
-);
-CREATE INDEX IF NOT EXISTS thumbnails_ts ON thumbnails(ts);
+  PRIMARY KEY (camera_id, start)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -66,6 +68,20 @@ export interface ThumbnailConfig {
   frequencyS: number;
 }
 
+export interface ThumbnailRun {
+  cameraId: string;
+  start: number;
+  end: number;
+  every: number;
+}
+
+interface RunRow {
+  start: number;
+  end: number;
+  every: number;
+  storage_id: string;
+}
+
 interface NvrRow {
   id: string;
   name: string;
@@ -89,6 +105,9 @@ interface ApiKeyRow {
   created_at: number;
   last_used_at: number | null;
 }
+
+const firstSlotFrom = (run: { start: number; every: number }, ts: number): number =>
+  run.start + Math.max(0, Math.ceil((ts - run.start) / run.every)) * run.every;
 
 const byId = <T extends { id: string }>(a: T, b: T): number => a.id.localeCompare(b.id, undefined, { numeric: true });
 
@@ -116,6 +135,7 @@ export class Database {
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.migrateLegacy();
     this.db.exec(SCHEMA);
+    this.migrateThumbnailIndex();
   }
 
   // Must run before SCHEMA, or CREATE TABLE IF NOT EXISTS would create empty
@@ -142,6 +162,30 @@ export class Database {
         this.db.exec("ALTER TABLE thumbnails RENAME COLUMN channel_id TO camera_id");
       }
     });
+  }
+
+  // The per-slot `thumbnails` table predates runs. VACUUM can't run inside a
+  // transaction, so it follows the commit.
+  private migrateThumbnailIndex(): void {
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'thumbnails'").get()) return;
+    const every = `COALESCE(c.frequency_s, ${DEFAULT_THUMBNAIL_FREQUENCY_S})`;
+    this.transaction(() => {
+      this.db.exec(`
+        INSERT INTO thumbnail_runs (camera_id, start, end, every, storage_id)
+        SELECT camera_id, MIN(ts), MAX(ts), every, storage_id FROM (
+          SELECT *, SUM(breaks) OVER (PARTITION BY camera_id ORDER BY ts) AS run FROM (
+            SELECT t.camera_id, t.ts, t.storage_id, ${every} AS every,
+              CASE WHEN LAG(t.ts) OVER slots = t.ts - ${every} AND LAG(t.storage_id) OVER slots = t.storage_id
+                THEN 0 ELSE 1 END AS breaks
+            FROM thumbnails t LEFT JOIN camera_thumbnails c ON c.camera_id = t.camera_id
+            WINDOW slots AS (PARTITION BY t.camera_id ORDER BY t.ts)
+          )
+        )
+        GROUP BY camera_id, run
+      `);
+      this.db.exec("DROP TABLE thumbnails");
+    });
+    this.db.exec("VACUUM");
   }
 
   private transaction(run: () => void): void {
@@ -252,7 +296,7 @@ export class Database {
   deleteStorage(id: string): void {
     this.transaction(() => {
       this.db.prepare("UPDATE camera_thumbnails SET storage_id = NULL WHERE storage_id = ?").run(id);
-      this.db.prepare("DELETE FROM thumbnails WHERE storage_id = ?").run(id);
+      this.db.prepare("DELETE FROM thumbnail_runs WHERE storage_id = ?").run(id);
       this.db.prepare("DELETE FROM storages WHERE id = ?").run(id);
     });
   }
@@ -298,46 +342,87 @@ export class Database {
   }
 
   // ---- captured thumbnails ------------------------------------------------
-  recordThumbnail(cameraId: string, ts: number, storageId: string): void {
-    this.db
-      .prepare("INSERT OR IGNORE INTO thumbnails (camera_id, ts, storage_id) VALUES (?, ?, ?)")
-      .run(cameraId, ts, storageId);
-  }
-
-  recordThumbnails(cameraId: string, slots: number[], storageId: string): number {
-    const insert = this.db.prepare("INSERT OR IGNORE INTO thumbnails (camera_id, ts, storage_id) VALUES (?, ?, ?)");
+  // Returns how many slots were new. A slot inside an existing run (held, or
+  // off that run's spacing) is skipped, so runs never overlap.
+  recordThumbnails(opts: { cameraId: string; slots: number[]; every: number; storageId: string }): number {
+    const { cameraId, every, storageId } = opts;
+    const before = this.db.prepare(
+      "SELECT start, end, every, storage_id FROM thumbnail_runs WHERE camera_id = ? AND start <= ? ORDER BY start DESC LIMIT 1"
+    );
+    const after = this.db.prepare(
+      "SELECT start, end, every, storage_id FROM thumbnail_runs WHERE camera_id = ? AND start > ? ORDER BY start LIMIT 1"
+    );
+    const setEnd = this.db.prepare("UPDATE thumbnail_runs SET end = ? WHERE camera_id = ? AND start = ?");
+    const setStart = this.db.prepare("UPDATE thumbnail_runs SET start = ? WHERE camera_id = ? AND start = ?");
+    const remove = this.db.prepare("DELETE FROM thumbnail_runs WHERE camera_id = ? AND start = ?");
+    const insert = this.db.prepare(
+      "INSERT INTO thumbnail_runs (camera_id, start, end, every, storage_id) VALUES (?, ?, ?, ?, ?)"
+    );
+    const fits = (run: RunRow | undefined): run is RunRow => run?.every === every && run.storage_id === storageId;
     let added = 0;
     this.transaction(() => {
-      for (const ts of slots) added += Number(insert.run(cameraId, ts, storageId).changes);
+      for (const ts of [...opts.slots].sort((a, b) => a - b)) {
+        const previous = before.get(cameraId, ts) as RunRow | undefined;
+        if (previous && ts <= previous.end) continue;
+        const next = after.get(cameraId, ts) as RunRow | undefined;
+        const joinsPrevious = fits(previous) && previous.end === ts - every;
+        const joinsNext = fits(next) && next.start === ts + every;
+        if (joinsPrevious && joinsNext) {
+          remove.run(cameraId, next.start);
+          setEnd.run(next.end, cameraId, previous.start);
+        } else if (joinsPrevious) {
+          setEnd.run(ts, cameraId, previous.start);
+        } else if (joinsNext) {
+          setStart.run(ts, cameraId, next.start);
+        } else {
+          insert.run(cameraId, ts, ts, every, storageId);
+        }
+        added++;
+      }
     });
     return added;
   }
 
   listThumbnails(cameraId: string, fromTs: number, toTs: number): number[] {
-    return (
-      this.db
-        .prepare("SELECT ts FROM thumbnails WHERE camera_id = ? AND ts >= ? AND ts <= ? ORDER BY ts")
-        .all(cameraId, fromTs, toTs) as Array<{ ts: number }>
-    ).map(row => row.ts);
+    const runs = this.db
+      .prepare(
+        "SELECT start, end, every, storage_id FROM thumbnail_runs WHERE camera_id = ? AND start <= ? AND end >= ? ORDER BY start"
+      )
+      .all(cameraId, toTs, fromTs) as unknown as RunRow[];
+    const slots: number[] = [];
+    for (const run of runs) {
+      const last = Math.min(run.end, toTs);
+      for (let ts = firstSlotFrom(run, fromTs); ts <= last; ts += run.every) slots.push(ts);
+    }
+    return slots;
   }
 
   getThumbnailStorage(cameraId: string, ts: number): string | null {
-    const row = this.db.prepare("SELECT storage_id FROM thumbnails WHERE camera_id = ? AND ts = ?").get(cameraId, ts) as
-      | { storage_id: string }
-      | undefined;
-    return row?.storage_id ?? null;
+    const run = this.db
+      .prepare(
+        "SELECT start, end, every, storage_id FROM thumbnail_runs WHERE camera_id = ? AND start <= ? ORDER BY start DESC LIMIT 1"
+      )
+      .get(cameraId, ts) as RunRow | undefined;
+    return run && ts <= run.end && (ts - run.start) % run.every === 0 ? run.storage_id : null;
   }
 
-  oldestThumbnails(storageId: string, beforeTs: number, limit: number): Array<{ cameraId: string; ts: number }> {
+  thumbnailRunsBefore(storageId: string, beforeTs: number): ThumbnailRun[] {
     return (
       this.db
-        .prepare("SELECT camera_id, ts FROM thumbnails WHERE storage_id = ? AND ts < ? ORDER BY ts LIMIT ?")
-        .all(storageId, beforeTs, limit) as Array<{ camera_id: string; ts: number }>
-    ).map(row => ({ cameraId: row.camera_id, ts: row.ts }));
+        .prepare("SELECT camera_id, start, end, every, storage_id FROM thumbnail_runs WHERE storage_id = ? AND start < ?")
+        .all(storageId, beforeTs) as unknown as Array<RunRow & { camera_id: string }>
+    ).map(row => ({ cameraId: row.camera_id, start: row.start, end: row.end, every: row.every }));
   }
 
-  deleteThumbnail(cameraId: string, ts: number): void {
-    this.db.prepare("DELETE FROM thumbnails WHERE camera_id = ? AND ts = ?").run(cameraId, ts);
+  // Drops the run's slots before beforeTs.
+  trimThumbnailRun(run: ThumbnailRun, beforeTs: number): void {
+    if (run.end < beforeTs) {
+      this.db.prepare("DELETE FROM thumbnail_runs WHERE camera_id = ? AND start = ?").run(run.cameraId, run.start);
+    } else {
+      this.db
+        .prepare("UPDATE thumbnail_runs SET start = ? WHERE camera_id = ? AND start = ?")
+        .run(firstSlotFrom(run, beforeTs), run.cameraId, run.start);
+    }
   }
 
   // ---- tags ---------------------------------------------------------------
