@@ -165,7 +165,8 @@ export class Database {
   }
 
   // The per-slot `thumbnails` table predates runs. VACUUM can't run inside a
-  // transaction, so it follows the commit.
+  // transaction, so it follows the commit; in WAL mode the file only shrinks
+  // once the WAL is checkpointed.
   private migrateThumbnailIndex(): void {
     if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'thumbnails'").get()) return;
     const every = `COALESCE(c.frequency_s, ${DEFAULT_THUMBNAIL_FREQUENCY_S})`;
@@ -185,7 +186,7 @@ export class Database {
       `);
       this.db.exec("DROP TABLE thumbnails");
     });
-    this.db.exec("VACUUM");
+    this.db.exec("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
   }
 
   private transaction(run: () => void): void {
